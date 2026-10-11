@@ -684,6 +684,43 @@ class LocalSpeechThreadTests(unittest.TestCase):
         self.assertIsNot(worker._sentences.get_nowait(), worker._FINISHED)
         self.assertIs(worker._sentences.get_nowait(), worker._FINISHED)
 
+    def test_send_timeout_speaks_summary_and_preserves_full_diagnostic(self) -> None:
+        from live_gpt.localization import localization
+        original_language = localization.language
+        self.addCleanup(localization.set_language, original_language)
+        for language, summary in (
+            ("en", "Could not send: Timeout 15000ms exceeded."),
+            ("zh", "无法发送：Timeout 15000ms exceeded."),
+        ):
+            with self.subTest(language=language):
+                localization.set_language(language)
+                controller = TrayController.__new__(TrayController)
+                controller.config = {"playing_backend": "sovits"}
+                controller.window = Mock()
+                controller._local_speech_thread = None
+                controller._local_tts_configuration = Mock(return_value=(Mock(), "model", "speaker", "auto"))
+                message = (
+                    "Could not send to ChatGPT: Locator.click: Timeout 15000ms exceeded.\n"
+                    "Call log:\n  - waiting for locator(\"form[data-thread-find-composer]\")\n"
+                    "  - waiting for element to be visible, enabled and stable"
+                )
+                with patch.object(_QueuedLocalSpeechThread, "start"):
+                    controller._on_send_finished(False, "Unsent prompt", message)
+                worker = controller._local_speech_thread
+                self.assertEqual(worker._sentences.get_nowait().text, summary)
+                self.assertIs(worker._sentences.get_nowait(), worker._FINISHED)
+                self.assertEqual(controller._local_voice_error, message)
+                controller.window.set_send_result.assert_called_once_with(False, "Unsent prompt", message)
+
+    def test_single_line_diagnostic_has_bounded_speech(self) -> None:
+        controller = TrayController.__new__(TrayController)
+        controller.config = {"playing_backend": "sovits"}
+        controller.window = Mock()
+        worker = _QueuedLocalSpeechThread(Mock(), "model", "speaker", "auto")
+        controller._local_speech_thread = worker
+        controller._speak_local_announcement("Unknown error: " + "x" * 2000)
+        self.assertEqual(len(worker._sentences.get_nowait().text), 240)
+
 
 class TranscriptEditorTests(unittest.TestCase):
     @classmethod
@@ -1261,6 +1298,133 @@ class SettingsDialogTests(unittest.TestCase):
 
 
 class TrayControllerBrowserTests(unittest.TestCase):
+    def test_exit_keeps_ui_responsive_until_all_workers_stop(self) -> None:
+        controller = TrayController.__new__(TrayController)
+        controller.application = Mock()
+        controller.window = Mock()
+        controller.tray_icon = Mock()
+        controller.menu = Mock()
+        controller.capture_refresh_timer = Mock()
+        controller.hotkey_monitor = Mock()
+        controller._save_window_geometry = Mock()
+        controller.browser_monitor = Mock()
+        controller.browser_monitor.wait.return_value = False
+        controller._local_dictation_thread = Mock()
+        controller._local_dictation_thread.wait.return_value = False
+        controller._local_speech_thread = Mock()
+        controller._local_speech_thread.wait.return_value = False
+
+        with patch("live_gpt.app.QTimer") as timer:
+            controller._exit_application()
+            controller.browser_monitor.request_stop.assert_called_once_with()
+            controller._local_dictation_thread.stop_recording.assert_called_once_with(cancel=True)
+            controller._local_speech_thread.request_stop.assert_called_once_with()
+            controller.window.hide.assert_called_once_with()
+            controller.application.quit.assert_not_called()
+            timer.return_value.start.assert_called_once()
+            controller._exit_application()
+            controller.browser_monitor.request_stop.assert_called_once_with()
+            # A stopped browser is insufficient if local audio is still running.
+            controller.browser_monitor.wait.return_value = True
+            controller._check_shutdown_finished()
+            controller.application.quit.assert_not_called()
+            controller._local_dictation_thread.wait.return_value = True
+            controller._local_speech_thread.wait.return_value = True
+            controller._check_shutdown_finished()
+            controller.application.quit.assert_called_once_with()
+            timer.return_value.stop.assert_called_once_with()
+        for worker in (controller.browser_monitor, controller._local_dictation_thread,
+                       controller._local_speech_thread):
+            self.assertTrue(worker.wait.called)
+            self.assertTrue(all(call.args == (0,) for call in worker.wait.call_args_list))
+
+    def test_late_dictation_and_speech_callbacks_do_not_restart_work_during_exit(self) -> None:
+        controller = TrayController.__new__(TrayController)
+        controller._shutting_down = True
+        controller.window = Mock()
+        controller._local_dictation_thread = Mock()
+        controller._local_speech_thread = Mock()
+        controller._pending_local_announcements = [("Queued speech", True)]
+        controller._speak_local_announcement = Mock()
+        controller.start_dictation()
+        controller.finish_dictation()
+        controller._on_send_finished(False, "Prompt", "Disconnected")
+        controller._on_response_update("Receiving", "Late reply")
+        controller._on_response_finished(False, "Disconnected")
+        controller._on_dictation_started(True, "Listening")
+        controller._on_dictation_finished(True, "Dictated words", "Finished")
+        controller._local_dictation_finished()
+        controller._local_speech_finished()
+        self.assertIsNone(controller._ensure_local_speech_worker())
+        controller.window.request_send_from_hotkey.assert_not_called()
+        controller.window.set_send_result.assert_not_called()
+        controller.window.set_response_update.assert_not_called()
+        controller.window.set_response_finished.assert_not_called()
+        controller._speak_local_announcement.assert_not_called()
+        controller._local_dictation_thread.deleteLater.assert_not_called()
+        controller._local_speech_thread.deleteLater.assert_not_called()
+
+    def test_exit_timer_keeps_processing_events_while_real_thread_unwinds(self) -> None:
+        from PySide6.QtCore import QThread, QTimer
+        from PySide6.QtWidgets import QWidget
+
+        application = QApplication.instance() or QApplication([])
+        released = threading.Event()
+
+        class SlowStoppingMonitor(QThread):
+            def request_stop(self):
+                pass  # Simulate browser cleanup that takes longer than one tick.
+
+            def run(self):
+                released.wait(5)
+
+        controller = TrayController.__new__(TrayController)
+        controller.application = Mock()
+        controller.window = QWidget()
+        controller.tray_icon = Mock()
+        controller.menu = Mock()
+        controller.capture_refresh_timer = Mock()
+        controller.hotkey_monitor = Mock()
+        controller._save_window_geometry = Mock()
+        controller._local_dictation_thread = None
+        controller._local_speech_thread = None
+        controller.browser_monitor = SlowStoppingMonitor()
+        controller.browser_monitor.start()
+        ticks = []
+        try:
+            controller._exit_application()
+            QTimer.singleShot(0, lambda: ticks.append("UI responsive"))
+            QTest.qWait(100)
+            self.assertEqual(ticks, ["UI responsive"])
+            controller.application.quit.assert_not_called()
+            released.set()
+            deadline = time.monotonic() + 2
+            while not controller.application.quit.called and time.monotonic() < deadline:
+                QTest.qWait(20)
+            controller.application.quit.assert_called_once_with()
+            self.assertFalse(controller.browser_monitor.isRunning())
+            self.assertFalse(controller._shutdown_timer.isActive())
+        finally:
+            released.set()
+            controller.browser_monitor.wait(2_000)
+            controller._shutdown_timer.stop()
+            controller.window.close()
+
+    def test_disconnection_during_exit_does_not_reopen_hidden_overlay(self) -> None:
+        application = QApplication.instance() or QApplication([])
+        window = OverlayWindow()
+        try:
+            window.set_chatgpt_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com/"}])
+            window.show()
+            window._shutting_down = True
+            window.hide()
+            window.set_chatgpt_tabs([])
+            window.show_for_auto_hide()
+            application.processEvents()
+            self.assertTrue(window.isHidden())
+        finally:
+            window.close()
+
     def test_stt_model_preloads_in_background_when_selected(self) -> None:
         controller = TrayController.__new__(TrayController)
         controller.config = {
@@ -1758,8 +1922,8 @@ class TrayControllerBrowserTests(unittest.TestCase):
             QApplication.processEvents()
             self.assertEqual(window.transcript_area.toPlainText(), "Unsent prompt")
             self.assertTrue(window.error_banner.isVisible())
-            self.assertEqual(window.error_banner.text(), message)
-            self.assertTrue(window.error_banner.wordWrap())
+            self.assertEqual(window.error_banner.toPlainText(), message)
+            self.assertTrue(window.error_banner.isReadOnly())
             self.assertTrue(window._pet_error)
             window.set_status("Sent to ChatGPT")
             self.assertTrue(window.error_banner.isHidden())
@@ -1773,7 +1937,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             window.dismiss_subtitle_mode()
             window.set_response_finished(False, "You’ve reached your usage limit")
             self.assertFalse(window.error_banner.isHidden())
-            self.assertEqual(window.error_banner.text(), "You’ve reached your usage limit")
+            self.assertEqual(window.error_banner.toPlainText(), "You’ve reached your usage limit")
             self.assertFalse(window._pet_response_pending)
         finally:
             window.close()
@@ -2007,6 +2171,40 @@ class TrayControllerBrowserTests(unittest.TestCase):
             self.assertEqual(window._subtitle_line_index, 1)
         finally:
             window.close()
+
+    def test_full_error_scrolls_without_clipping_pet_near_screen_bottom(self) -> None:
+        application = QApplication.instance() or QApplication([])
+        message = "Could not send: Locator.click: Timeout 15000ms exceeded.\nCall log:\n" + "\n".join(
+            f"  - diagnostic {index}: " + "very-long-selector" * 70 for index in range(60)
+        )
+        for locked in (False, True):
+            with self.subTest(locked=locked):
+                window = OverlayWindow()
+                try:
+                    window.show()
+                    application.processEvents()
+                    window.move(window.x(), window.screen().availableGeometry().bottom() - window.height() + 1)
+                    window._set_position_locked(locked)
+                    window.set_send_result(False, "Unsent prompt", message)
+                    application.processEvents()
+                    window.reveal_controls()
+                    self.assertEqual(window.error_banner.toPlainText(), message)
+                    self.assertEqual(window.transcript_area.toPlainText(), "Unsent prompt")
+                    self.assertGreater(window.error_banner.verticalScrollBar().maximum(), 0)
+                    window.error_banner.moveCursor(window.error_banner.textCursor().MoveOperation.End)
+                    window.error_banner.ensureCursorVisible()
+                    self.assertTrue(window.error_banner.viewport().rect().contains(window.error_banner.cursorRect()))
+                    pet_rect = QRect(window.pet.mapTo(window, QPoint()), window.pet.size())
+                    self.assertTrue(window.rect().contains(pet_rect))
+                    self.assertLessEqual(window.frameGeometry().bottom(), window.screen().availableGeometry().bottom())
+                    window._track_pointer(QPoint(-10000, -10000))
+                    application.processEvents()
+                    pet_rect = QRect(window.pet.mapTo(window, QPoint()), window.pet.size())
+                    self.assertTrue(window.rect().contains(pet_rect))
+                    window.set_status("Sent to ChatGPT")
+                    self.assertTrue(window.error_banner.isHidden())
+                finally:
+                    window.close()
 
     def test_local_subtitles_follow_source_offsets_past_short_headings(self) -> None:
         window = OverlayWindow()

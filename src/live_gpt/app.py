@@ -36,6 +36,7 @@ from PySide6.QtGui import (
     QRegion,
     QTextCursor,
     QTextDocument,
+    QTextOption,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -3368,11 +3369,13 @@ class OverlayWindow(QMainWindow):
         self.clear_button.clicked.connect(self._request_clear)
 
         panel_layout.addWidget(self.title_bar)
-        self.error_banner = QLabel()
+        self.error_banner = QTextBrowser()
         self.error_banner.setObjectName("errorBanner")
-        self.error_banner.setTextFormat(Qt.TextFormat.PlainText)
-        self.error_banner.setWordWrap(True)
-        self.error_banner.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.error_banner.setReadOnly(True)
+        self.error_banner.setAccessibleName(tr("Error details"))
+        self.error_banner.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self.error_banner.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.error_banner.setFixedHeight(120)
         self.error_banner.hide()
         panel_layout.addWidget(self.error_banner)
         recording_layout = QHBoxLayout()
@@ -3430,7 +3433,7 @@ class OverlayWindow(QMainWindow):
                 font-size: 20px;
                 font-weight: 700;
             }
-            QLabel#errorBanner {
+            QTextBrowser#errorBanner {
                 color: #ff8999;
                 background-color: rgba(120, 30, 48, 110);
                 border: 1px solid rgba(255, 102, 122, 120);
@@ -3638,11 +3641,30 @@ class OverlayWindow(QMainWindow):
 
     def set_status(self, message: str, *, error: bool = False) -> None:
         message = translate_message(message)
-        self.transcript_area.set_hint(message, error=error)
-        self.error_banner.setText(message if error else "")
+        self.error_banner.setPlainText(message if error else "")
         self.error_banner.setVisible(error)
+        if error:
+            # Bound diagnostics to a scrolling viewport and reserve the layout's
+            # minimum height for the pet and input, including a locked overlay.
+            if self._position_locked:
+                self.setMinimumSize(760, 180)
+                self.setMaximumSize(16_777_215, 16_777_215)
+            self.panel.layout().activate()
+            self.centralWidget().layout().activate()
+            minimum_height = self.centralWidget().minimumSizeHint().height()
+            self.setMinimumHeight(minimum_height)
+            bounds = self.screen().availableGeometry()
+            target = QRect(self.geometry())
+            target.setHeight(max(target.height(), minimum_height))
+            target.moveTop(max(bounds.top(), min(target.top(), bounds.bottom() - target.height() + 1)))
+            self.setGeometry(target)
+            if self._position_locked:
+                self.setFixedSize(self.size())
+        elif not self._position_locked:
+            self.setMinimumHeight(180)
         self._pet_error = error
         self._refresh_pet()
+        self.transcript_area.set_hint(message.splitlines()[0] if message else "", error=error)
 
     def _refresh_pet(self) -> None:
         state = (
@@ -3661,6 +3683,8 @@ class OverlayWindow(QMainWindow):
         self.transcript_area.setTextCursor(cursor)
 
     def set_chatgpt_tabs(self, tabs: list[dict[str, str]]) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
         was_connected = self._browser_connected
         self._browser_connected = bool(tabs)
         selected_id = self.chatgpt_tab_combo.currentData()
@@ -4489,7 +4513,7 @@ class OverlayWindow(QMainWindow):
         return True
 
     def show_for_auto_hide(self) -> None:
-        if not self._auto_hide_enabled:
+        if getattr(self, "_shutting_down", False) or not self._auto_hide_enabled:
             return
         self._auto_hide_timer.stop()
         if self.isHidden():
@@ -4609,6 +4633,7 @@ class OverlayWindow(QMainWindow):
         if self._content_visible:
             widgets.extend((
                 self.transcript_area, self.subtitle_panel, self.dictation_panel,
+                self.error_banner,
             ))
         return any(
             widget.isVisible()
@@ -4656,14 +4681,15 @@ class OverlayWindow(QMainWindow):
         ).height()
         base = self._input_collapsed_geometry
         available = self.screen().availableGeometry()
-        height = min(max(base.height(), self.height() - widget.height() + text_height + 28), available.height())
+        minimum_height = self.centralWidget().minimumSizeHint().height() if not self.error_banner.isHidden() else 180
+        height = min(max(base.height(), minimum_height, self.height() - widget.height() + text_height + 28), available.height())
         target = QRect(base)
         target.setTop(max(available.top(), min(base.bottom() - height + 1, available.bottom() - height + 1)))
         target.setHeight(height)
         self._fitting_hover_input = True
         try:
             if self._position_locked:
-                self.setMinimumSize(760, 180)
+                self.setMinimumSize(760, minimum_height)
                 self.setMaximumSize(16_777_215, 16_777_215)
             self.setGeometry(target)
         finally:
@@ -4675,9 +4701,14 @@ class OverlayWindow(QMainWindow):
             return
         self._fitting_hover_input = True
         try:
-            self.setGeometry(base)
+            target = QRect(base)
+            if not self.error_banner.isHidden():
+                target.setHeight(max(target.height(), self.centralWidget().minimumSizeHint().height()))
+                bounds = self.screen().availableGeometry()
+                target.moveTop(max(bounds.top(), min(target.top(), bounds.bottom() - target.height() + 1)))
+            self.setGeometry(target)
             if self._position_locked:
-                self.setFixedSize(base.size())
+                self.setFixedSize(target.size())
         finally:
             self._input_collapsed_geometry = None
             self._fitting_hover_input = False
@@ -4878,6 +4909,7 @@ class OverlayWindow(QMainWindow):
 class TrayController:
     def __init__(self, application: QApplication) -> None:
         logger.debug("Creating tray controller")
+        self._shutting_down = False
         self.application = application
         self.icon = QIcon(str(ICON_PATH))
         self.config = Config()
@@ -5225,6 +5257,8 @@ class TrayController:
 
     def _show_from_tray(self, checked: bool = False) -> None:
         del checked
+        if getattr(self, "_shutting_down", False):
+            return
         self.window.disable_auto_hide()
         self.show_window()
         self.window.reveal_controls()
@@ -5307,6 +5341,8 @@ class TrayController:
         return sentences, consumed
 
     def _ensure_local_speech_worker(self, *, display_playback: bool = True) -> _QueuedLocalSpeechThread | None:
+        if getattr(self, "_shutting_down", False):
+            return None
         if self._local_speech_thread is None:
             configuration = self._local_tts_configuration()
             if configuration is None:
@@ -5329,6 +5365,13 @@ class TrayController:
             or getattr(self, "_local_voice_interrupted", False)
         ):
             return
+        # Exception strings can include Playwright call logs and tracebacks.
+        # Keep those in the UI; speech only needs the short reason for failure.
+        message = message.strip().splitlines()[0] if message.strip() else ""
+        message = re.sub(r"\b(?:Locator|Page|Frame)\.\w+:\s*", "", message)
+        message = message[:240]
+        if not message:
+            return
         worker = self._local_speech_thread
         if isinstance(worker, _QueuedLocalSpeechThread) and worker._queue_finished:
             pending = getattr(self, "_pending_local_announcements", [])
@@ -5342,6 +5385,8 @@ class TrayController:
                 worker.finish_queue()
 
     def _on_send_finished(self, success: bool, text: str, message: str) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
         self.window.set_send_result(success, text, message)
         if not success:
             self._local_voice_error = message
@@ -5351,9 +5396,13 @@ class TrayController:
             )
 
     def _on_response_update(self, status: str, text: str) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
         self.window.set_response_update(status, text)
 
     def _on_response_finished(self, success: bool, message: str) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
         self.window.set_response_finished(success, message)
         # An announcement can start playback before any reply text exists.
         # Close that queue even if the browser fails without producing text.
@@ -5483,6 +5532,8 @@ class TrayController:
         worker.start()
 
     def _local_speech_finished(self) -> None:
+        if getattr(self, "_shutting_down", False):
+            return  # Retain the QThread until shutdown confirms it has joined.
         worker = self._local_speech_thread
         self._local_speech_thread = None
         # Keep the reply's speech history until the next send; late snapshots
@@ -5517,6 +5568,8 @@ class TrayController:
         include_screenshot: bool = True,
         initial_hold_seconds: float = 0.0,
     ) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
         self._stop_playback_for_recording()
         self.window.prepare_for_dictation()
         self._dictation_send_on_finish = send_on_finish
@@ -5734,6 +5787,8 @@ class TrayController:
         worker.start()
 
     def _local_dictation_finished(self) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
         worker = self._local_dictation_thread
         self._local_dictation_thread = None
         if worker is not None:
@@ -5751,6 +5806,8 @@ class TrayController:
             )
 
     def finish_dictation(self) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
         self._dictation_input_held = False
         state = getattr(self, "_dictation_state", "idle")
         tab_id = self.dictation_tab_id
@@ -5815,6 +5872,8 @@ class TrayController:
             self.browser_monitor.request_cancel_dictation(tab_id)
 
     def _on_dictation_started(self, success: bool, message: str) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
         if success:
             if (
                 self.dictation_tab_id is not None
@@ -5857,6 +5916,8 @@ class TrayController:
         text: str,
         message: str,
     ) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
         was_cancelled = getattr(self, "_dictation_state", "idle") == "cancelling"
         restart = getattr(self, "_dictation_input_held", False)
         pressed_since = getattr(self, "_dictation_pressed_since", None)
@@ -6138,26 +6199,47 @@ class TrayController:
 
     def _exit_application(self, checked: bool = False) -> None:
         del checked
+        if getattr(self, "_shutting_down", False):
+            return
+        self._shutting_down = True
         logger.info("Exit requested")
+        self._dictation_input_held = False
+        self._dictation_state = "idle"
+        self._local_voice_interrupted = True
+        self._pending_local_announcements = []
+        cancelled = getattr(self, "_browser_dictation_start_cancelled", None)
+        if cancelled is not None:
+            cancelled.set()
         self._save_window_geometry()
         self.capture_refresh_timer.stop()
         self.hotkey_monitor.stop()
-        if self._local_dictation_thread is not None:
-            self._local_dictation_thread.stop_recording(cancel=True)
-            self._local_dictation_thread.wait(5_000)
-        if self._local_speech_thread is not None:
-            if isinstance(self._local_speech_thread, _QueuedLocalSpeechThread):
-                self._local_speech_thread.finish_queue()
-            try:
-                import sounddevice as sd
-
-                sd.stop()
-            except Exception:
-                pass
-            self._local_speech_thread.wait(5_000)
+        self.window._shutting_down = True
+        self.window.setEnabled(False)
+        self.window.hide()
+        self.menu.setEnabled(False)
+        # Retain every QThread while their finished signals are being delivered.
+        self._shutdown_workers = [self.browser_monitor]
         self.browser_monitor.request_stop()
-        if not self.browser_monitor.wait(17_000):
-            logger.warning("Browser monitor did not stop before application exit")
+        if self._local_dictation_thread is not None:
+            self._shutdown_workers.append(self._local_dictation_thread)
+            self._local_dictation_thread.stop_recording(cancel=True)
+        if self._local_speech_thread is not None:
+            self._shutdown_workers.append(self._local_speech_thread)
+            self._local_speech_thread.request_stop()
+        self._shutdown_timer = QTimer(self.window)
+        self._shutdown_timer.setInterval(50)
+        self._shutdown_timer.timeout.connect(self._check_shutdown_finished)
+        self._shutdown_timer.start()
+        self._check_shutdown_finished()
+
+    def _check_shutdown_finished(self) -> None:
+        # wait(0) also checks native thread teardown, without blocking the UI.
+        # Keep Qt alive instead of destroying a worker that is still running.
+        if any(not worker.wait(0) for worker in self._shutdown_workers):
+            return
+        self._shutdown_timer.stop()
+        self.tray_icon.hide()
+        logger.info("All application workers stopped")
         self.application.quit()
 
 

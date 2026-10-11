@@ -65,7 +65,7 @@ class BrowserUsageLimitTests(unittest.TestCase):
         from live_gpt.browser import _UsageLimitError
         page = Mock()
         button = page.locator.return_value.first.locator.return_value.locator.return_value.first
-        button.click.side_effect = RuntimeError("Send disabled")
+        button.evaluate.side_effect = RuntimeError("Send disabled")
         with (
             patch.object(BrowserMonitor, "_usage_limit_message", side_effect=["", self.message]),
             patch.object(BrowserMonitor, "_screenshot_upload_state", return_value="missing"),
@@ -735,6 +735,26 @@ class BrowserMonitorTests(unittest.TestCase):
         loop.call_soon_threadsafe.assert_called_once_with(stop_transport)
         self.assertTrue(monitor._retry_connection_requested)
 
+    def test_stop_interrupts_established_browser_operation(self) -> None:
+        monitor = BrowserMonitor()
+        loop, stop_transport = Mock(), Mock()
+        monitor._playwright_cancellation = (loop, stop_transport)
+        self.assertFalse(monitor._connection_pending.is_set())
+
+        monitor.request_stop()
+
+        loop.call_soon_threadsafe.assert_called_once_with(stop_transport)
+        self.assertTrue(monitor._wake_event.is_set())
+
+    def test_stop_tolerates_driver_loop_already_closed(self) -> None:
+        monitor = BrowserMonitor()
+        loop = Mock()
+        loop.call_soon_threadsafe.side_effect = RuntimeError("Event loop is closed")
+        monitor._playwright_cancellation = (loop, Mock())
+        monitor.request_stop()
+        self.assertTrue(monitor._stop_requested)
+        loop.call_soon_threadsafe.assert_called_once()
+
     def test_retry_tolerates_driver_loop_already_closed(self) -> None:
         monitor = BrowserMonitor()
         loop = Mock()
@@ -883,7 +903,8 @@ class BrowserMonitorTests(unittest.TestCase):
             timeout=5_000,
         )
         composer.fill.assert_called_once_with("Hello from Live GPT")
-        send_button.click.assert_called_once_with(timeout=15_000)
+        send_button.click.assert_not_called()
+        send_button.evaluate.assert_called_once()
         self.assertEqual(
             results,
             [(True, "Hello from Live GPT", "Sent to ChatGPT")],
@@ -933,7 +954,8 @@ class BrowserMonitorTests(unittest.TestCase):
             },
             timeout=10_000,
         )
-        send_button.click.assert_called_once_with(timeout=15_000)
+        send_button.click.assert_not_called()
+        send_button.evaluate.assert_called_once()
 
     def test_preuploaded_attachment_is_preserved_when_sending(self) -> None:
         composer = Mock()
@@ -960,7 +982,8 @@ class BrowserMonitorTests(unittest.TestCase):
 
         clear.assert_not_called()
         composer.fill.assert_called_once_with("Dictated prompt")
-        send_button.click.assert_called_once_with(timeout=15_000)
+        send_button.click.assert_not_called()
+        send_button.evaluate.assert_called_once()
 
     def test_attachment_request_replaces_pending_chatgpt_image(self) -> None:
         page = Mock()
@@ -1517,6 +1540,41 @@ class BrowserMonitorTests(unittest.TestCase):
         ):
             self.assertEqual(monitor._finish_browser_dictation(page, ""), "")
         self.assertEqual(page.wait_for_timeout.call_count, 2)
+
+    def test_dictation_result_timeout_keeps_responsive_driver_connected(self) -> None:
+        monitor = BrowserMonitor()
+        loop, stop_transport = Mock(), Mock()
+        loop.call_soon_threadsafe.side_effect = lambda callback: callback()
+        monitor._playwright_cancellation = (loop, stop_transport)
+        elapsed = 0.0
+        timers = []
+
+        def create_timer(timeout, callback):
+            timer = Mock()
+            record = {"deadline": elapsed + timeout, "callback": callback, "active": False}
+            timer.start.side_effect = lambda: record.update(active=True)
+            timer.cancel.side_effect = lambda: record.update(active=False)
+            timers.append(record)
+            return timer
+
+        def wait(milliseconds):
+            nonlocal elapsed
+            # Simulate responsive polling with a small CDP round-trip cost.
+            elapsed += milliseconds / 1000 + 0.02
+            for timer in timers:
+                if timer["active"] and elapsed >= timer["deadline"]:
+                    timer["callback"]()
+
+        page = Mock(wait_for_timeout=Mock(side_effect=wait))
+        with (
+            patch.object(monitor, "_first_visible_locator", return_value=Mock()),
+            patch.object(monitor, "_dictation_result_snapshot", return_value=(None, False)),
+            patch("live_gpt.browser.time.monotonic", side_effect=lambda: elapsed),
+            patch("live_gpt.browser.threading.Timer", side_effect=create_timer),
+        ):
+            self.assertEqual(monitor._finish_browser_dictation(page, "Existing text"), "Existing text")
+        self.assertGreaterEqual(elapsed, DICTATION_RESULT_TIMEOUT_MS / 1000)
+        stop_transport.assert_not_called()
 
     def test_missing_composer_does_not_finish_before_timeout(self) -> None:
         monitor = BrowserMonitor()

@@ -31,6 +31,49 @@ class BrowserLocalizationTests(unittest.TestCase):
         self.page = self.browser.new_page()
         self.addCleanup(self.page.close)
 
+    def test_stop_interrupts_browser_call_and_preserves_attached_browser(self):
+        import threading
+
+        browser = self.playwright.chromium.launch(
+            channel=os.environ["LIVE_GPT_TEST_BROWSER"], headless=True,
+            args=["--remote-debugging-port=0", "--enable-automation"],
+        )
+        self.addCleanup(browser.close)
+        page = browser.new_page()
+        page.set_content("<p>Keep this browser open</p>")
+        session = browser.new_browser_cdp_session()
+        arguments = session.send("Browser.getBrowserCommandLine")["arguments"]
+        session.detach()
+        profile = next(argument.split("=", 1)[1] for argument in arguments
+                       if argument.startswith("--user-data-dir="))
+        port, path = (Path(profile) / "DevToolsActivePort").read_text().splitlines()[:2]
+        endpoint = f"ws://127.0.0.1:{port}{path}"
+        started = threading.Event()
+        monitor = BrowserMonitor()
+
+        def blocked_session(sync_playwright, _error, state):
+            with sync_playwright() as playwright:
+                connection = playwright._impl_obj._connection
+                monitor._playwright_cancellation = (
+                    connection._loop, connection._transport._proc.terminate,
+                )
+                attached = playwright.chromium.connect_over_cdp(endpoint, no_defaults=True)
+                state.browser = attached
+                started.set()
+                attached.contexts[0].pages[0].wait_for_timeout(60_000)
+
+        monitor._run_session = blocked_session
+        monitor.start()
+        try:
+            self.assertTrue(started.wait(10), "Worker did not attach to the test browser")
+            monitor.request_stop()
+            self.assertTrue(monitor.wait(3_000), "Blocked browser worker did not stop promptly")
+            self.assertTrue(browser.is_connected())
+            self.assertEqual(page.locator("p").inner_text(), "Keep this browser open")
+        finally:
+            monitor.request_stop()
+            monitor.wait(10_000)
+
     def test_tab_discovery_works_with_frozen_chatgpt_renderer(self):
         from live_gpt.browser import _MonitorState
         from playwright.sync_api import Error
@@ -389,6 +432,61 @@ class BrowserLocalizationTests(unittest.TestCase):
                 self.assertEqual(self.page.evaluate("window.sentText"), "请读这条消息")
                 self.assertEqual(self.page.evaluate("window.sendCount"), 1)
                 self.assertFalse(self.page.evaluate("window.wrongSent"))
+
+    def test_pasted_work_composer_sends_once_while_button_keeps_moving(self):
+        from playwright.sync_api import TimeoutError
+        composer = (Path(__file__).parent / "fixtures" / "chatgpt_work_composer.html").read_text(encoding="utf-8")
+        self.page.route("**/*", lambda route: route.abort())
+        self.page.set_content('''<form data-thread-find-composer="true" onsubmit="
+            window.sendCount++; window.sentText=this.querySelector('[data-composer-markdown]').innerText;
+            this.querySelector('[data-composer-markdown]').textContent=''; return false">'''
+            + composer + '</form>')
+        self.page.evaluate('''() => {
+            window.sendCount=0;
+            document.querySelector('button[type="submit"]').animate(
+                [{transform:'translateX(0px)'}, {transform:'translateX(100px)'}],
+                {duration:1000, iterations:Infinity, direction:'alternate'});
+        }''')
+        # Reproduce the original failure: visible and enabled, but never stable.
+        button = self.page.locator('button[type="submit"]')
+        self.assertTrue(button.is_visible())
+        self.assertTrue(button.is_enabled())
+        with self.assertRaises(TimeoutError):
+            button.click(timeout=300)
+        self.assertEqual(self.page.evaluate('window.sendCount'), 0)
+        BrowserMonitor._send_to_chatgpt_page(self.page, "请发送这条消息")
+        self.assertEqual(self.page.evaluate('window.sendCount'), 1)
+        self.assertEqual(self.page.evaluate('window.sentText'), "请发送这条消息")
+        self.assertEqual(BrowserMonitor._read_composer_text(self.page), "")
+
+    def test_send_waits_for_replaced_disabled_button(self):
+        self.page.set_content('''<form data-thread-find-composer="true" onsubmit="
+            window.sendCount++; window.sentText=this.querySelector('[data-composer-markdown]').innerText;
+            this.querySelector('[data-composer-markdown]').textContent=''; return false">
+            <div data-composer-markdown contenteditable="true" role="textbox" oninput="
+                setTimeout(() => document.querySelector('#send').outerHTML=
+                '<button id=&quot;send&quot; type=&quot;submit&quot;>Send</button>', 150)"></div>
+            <button id="send" type="submit" disabled>Send</button></form>''')
+        self.page.evaluate('window.sendCount=0')
+        BrowserMonitor._send_to_chatgpt_page(self.page, "Wait for readiness")
+        self.assertEqual(self.page.evaluate('window.sendCount'), 1)
+        self.assertEqual(self.page.evaluate('window.sentText'), "Wait for readiness")
+
+    def test_send_never_activates_disabled_or_inert_button(self):
+        for attributes in ('disabled', 'aria-disabled="true"', 'inert'):
+            with self.subTest(attributes=attributes):
+                self.page.set_content(f'''<form data-thread-find-composer="true" onsubmit="
+                    window.sendCount++; return false">
+                    <div data-composer-markdown contenteditable="true" role="textbox">Keep my prompt</div>
+                    <fieldset {attributes}><button type="submit">Send</button></fieldset>
+                    </form>''')
+                self.page.evaluate('window.sendCount=0')
+                with self.assertRaisesRegex(RuntimeError, "send button did not become ready"):
+                    BrowserMonitor._click_chatgpt_send_button(
+                        self.page, self.page.locator('button[type="submit"]'), timeout=300,
+                    )
+                self.assertEqual(self.page.evaluate('window.sendCount'), 0)
+                self.assertEqual(BrowserMonitor._read_composer_text(self.page), "Keep my prompt")
 
     def test_markdown_composer_sends_with_unlabelled_submit_id(self):
         self.page.set_content('''
@@ -932,6 +1030,43 @@ class BrowserLocalizationTests(unittest.TestCase):
         self.assertEqual(monitor._screenshot_upload_state(self.page), "missing")
         self.assertEqual(started, [])
         self.assertEqual(finished, [(True, "Keep this text", "Dictation cancelled")])
+
+    def test_pasted_multiline_composer_finishes_dictation_and_sends(self):
+        from unittest.mock import patch
+
+        footer = (Path(__file__).parent / "fixtures" / "chatgpt_multiline_composer.html").read_text(encoding="utf-8")
+        expected = "剩下的死亡矿井任务怎么接。"
+        self.page.set_content('<form onsubmit="window.sendCount++; '
+            'window.sentText=this.querySelector(\'[data-composer-markdown]\').innerText; '
+            'this.querySelector(\'[data-composer-markdown]\').textContent=\'\'; return false">'
+            + footer + '<button type="button" aria-label="Stop dictation" hidden>Stop</button></form>')
+        monitor = BrowserMonitor()
+        self.assertEqual(monitor._dictation_result_snapshot(self.page), (expected, True))
+        self.page.evaluate('''() => {
+            window.sendCount = 0;
+            const editor = document.querySelector('[data-composer-markdown]');
+            const result = editor.innerText;
+            editor.textContent = '';
+            editor.hidden = true;
+            const mic = document.querySelector('[aria-label="Dictate"]');
+            mic.hidden = true;
+            const done = document.querySelector('[aria-label="Stop dictation"]');
+            done.hidden = false;
+            done.onclick = () => {
+                done.hidden = true;
+                mic.hidden = false;
+                editor.hidden = false;
+                editor.textContent = result;
+            };
+        }''')
+        with patch.object(self.page, "wait_for_timeout", wraps=self.page.wait_for_timeout) as wait:
+            text = monitor._finish_browser_dictation(self.page, "")
+        self.assertEqual(text, expected)
+        self.assertEqual(wait.call_count, 3)
+        monitor._send_to_chatgpt_page(self.page, text, preserve_attachments=True)
+        self.assertEqual(self.page.evaluate("window.sendCount"), 1)
+        self.assertEqual(self.page.evaluate("window.sentText"), expected)
+        self.assertEqual(monitor._dictation_result_snapshot(self.page), ("", True))
 
     def test_empty_dictation_finishes_when_idle_microphone_returns(self):
         from unittest.mock import patch

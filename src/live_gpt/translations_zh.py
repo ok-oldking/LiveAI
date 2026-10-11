@@ -56,6 +56,8 @@ TRANSLATIONS = {
     "Could not read ChatGPT's reply: {error}": "无法读取回复：{error}",
     "Could not clear ChatGPT input: {error}": "无法清除输入：{error}",
     "Could not send to ChatGPT: {error}": "无法发送：{error}",
+    "Error details": "错误详情",
+    "ChatGPT's send button did not become ready": "发送按钮未就绪",
     "Could not start browser dictation: {error}": "无法启动浏览器听写：{error}",
     "Could not finish browser dictation: {error}": "无法完成浏览器听写：{error}",
     "Could not cancel browser dictation: {error}": "无法取消浏览器听写：{error}",

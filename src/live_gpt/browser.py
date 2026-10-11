@@ -42,6 +42,7 @@ CHATGPT_COMPOSER_SELECTOR = (
     '#prompt-textarea[contenteditable="true"]:visible, '
     '[data-composer-surface="true"]:visible '
     '[contenteditable="true"][role="textbox"]:visible, '
+    '[data-composer-markdown][contenteditable="true"][role="textbox"]:visible, '
     '#prompt-textarea[contenteditable="true"]:visible, '
     'textarea[name="prompt-textarea"]:visible'
 )
@@ -354,7 +355,7 @@ class BrowserMonitor(QThread):
     def request_stop(self) -> None:
         self._stop_requested = True
         self._wake_event.set()
-        self._interrupt_pending_connection()
+        self._interrupt_browser_driver()
 
     def request_retry_connection(self) -> None:
         logger.info("Browser connection retry requested")
@@ -363,13 +364,19 @@ class BrowserMonitor(QThread):
         self._interrupt_pending_connection()
 
     def _interrupt_pending_connection(self) -> None:
+        if self._connection_pending.is_set():
+            self._interrupt_browser_driver()
+
+    def _interrupt_browser_driver(self) -> None:
+        # A page call can be blocked after connection approval, too. Interrupt
+        # our driver so the worker can unwind without closing browser windows.
         cancellation = self._playwright_cancellation
-        if self._connection_pending.is_set() and cancellation is not None:
+        if cancellation is not None:
             loop, stop_transport = cancellation
             try:
                 loop.call_soon_threadsafe(stop_transport)
             except RuntimeError:
-                pass  # The pending driver has already stopped.
+                pass  # The driver has already stopped.
 
     def request_stop_reading(self, *, message: str = "Playback stopped for recording") -> None:
         self._stop_reading_message = message
@@ -576,7 +583,9 @@ class BrowserMonitor(QThread):
                 )
                 self._wake_event.wait(0.25 if is_busy else 1.5)
                 self._wake_event.clear()
-            self._playwright_cancellation = None
+
+            # Keep cancellation available during Playwright context teardown.
+            # run() clears it after the context has actually exited.
 
     def _stop_active_reading(self, state: _MonitorState) -> None:
         if not self._stop_reading_requested:
@@ -1451,7 +1460,7 @@ class BrowserMonitor(QThread):
         for _ in range(3):
             try:
                 send_button.wait_for(state="visible", timeout=5_000)
-                send_button.click(timeout=15_000)
+                cls._click_chatgpt_send_button(page, send_button)
                 # Clicking a usable button does not prove ChatGPT accepted the prompt.
                 page.wait_for_function("""() => {
                     const composer = [...document.querySelectorAll(
@@ -1464,7 +1473,7 @@ class BrowserMonitor(QThread):
                         '[data-composer-attachments] [class*="group/composer-attachment"]'
                     );
                     return !text.trim() && !attachments;
-                }""", timeout=5_000)
+                }""", timeout=5_000, polling=100)
                 return
             except Exception:
                 # A limit or failed upload can appear while Send becomes ready.
@@ -1484,6 +1493,30 @@ class BrowserMonitor(QThread):
                         continue
                     raise RuntimeError("Screenshot upload failed") from None
                 raise
+
+    @staticmethod
+    def _click_chatgpt_send_button(
+        page: Any, send_button: Any, *, timeout: int = 15_000,
+    ) -> None:
+        # A background tab or an animated composer may never provide the two
+        # stable animation frames required by Locator.click(). Check readiness
+        # and activate the same button atomically, without moving browser focus.
+        deadline = time.monotonic() + timeout / 1000
+        while True:
+            remaining = int((deadline - time.monotonic()) * 1000)
+            if remaining <= 0:
+                raise RuntimeError("ChatGPT's send button did not become ready")
+            clicked = send_button.evaluate("""button => {
+                if (!button.isConnected || !button.getClientRects().length
+                    || getComputedStyle(button).visibility !== 'visible'
+                    || button.matches(':disabled')
+                    || button.closest('[inert], [aria-disabled="true"]')) return false;
+                button.click();
+                return true;
+            }""", timeout=remaining)
+            if clicked:
+                return
+            page.wait_for_timeout(min(100, remaining))
 
     @classmethod
     def _clear_chatgpt_attachments(cls, page: Any) -> None:
@@ -1757,23 +1790,25 @@ class BrowserMonitor(QThread):
         stable_polls = 0
         ready_polls = 0
         deadline = time.monotonic() + DICTATION_RESULT_TIMEOUT_MS / 1_000
-        with self._browser_operation(DICTATION_RESULT_TIMEOUT_MS / 1_000):
-            for _ in range(DICTATION_RESULT_POLL_COUNT):
-                if self._stop_requested or time.monotonic() >= deadline:
-                    break
+        for _ in range(DICTATION_RESULT_POLL_COUNT):
+            if self._stop_requested or time.monotonic() >= deadline:
+                break
+            # Transcription may legitimately take the full result timeout.
+            # Reconnect only when an individual poll stops responding.
+            with self._browser_operation(5):
                 page.wait_for_timeout(DICTATION_RESULT_POLL_INTERVAL_MS)
                 current_text, ready = self._dictation_result_snapshot(page)
-                if current_text is None:
-                    stable_polls = ready_polls = 0
-                    continue
-                if current_text == text:
-                    stable_polls += 1
-                else:
-                    text = current_text
-                    stable_polls = 0
-                ready_polls = ready_polls + 1 if ready else 0
-                if stable_polls >= 2 and (text != initial_text or ready_polls >= 2):
-                    return text
+            if current_text is None:
+                stable_polls = ready_polls = 0
+                continue
+            if current_text == text:
+                stable_polls += 1
+            else:
+                text = current_text
+                stable_polls = 0
+            ready_polls = ready_polls + 1 if ready else 0
+            if stable_polls >= 2 and (text != initial_text or ready_polls >= 2):
+                return text
         return text
 
     @staticmethod
