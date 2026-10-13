@@ -25,6 +25,12 @@ class FakePlaywrightError(Exception):
     pass
 
 
+def _button_locator(button: Mock) -> Mock:
+    locator = Mock(last=button)
+    locator.filter.return_value = locator
+    return locator
+
+
 class BrowserUsageLimitTests(unittest.TestCase):
     message = "You’ve reached your 5-hour Work usage limit. Wait for your usage to reset at 2:53 PM."
 
@@ -1139,8 +1145,8 @@ class BrowserMonitorTests(unittest.TestCase):
             if selector in DICTATION_CANCEL_SELECTORS:
                 unavailable = Mock()
                 unavailable.is_visible.return_value = False
-                return Mock(last=unavailable)
-            return Mock(last=microphone)
+                return _button_locator(unavailable)
+            return _button_locator(microphone)
 
         page.locator.side_effect = locate
         browser = Mock(contexts=[Mock(pages=[page])])
@@ -1271,7 +1277,7 @@ class BrowserMonitorTests(unittest.TestCase):
         microphone = Mock()
         cancelled = monitor.request_start_dictation(str(id(page)))
 
-        def ready(_script: str) -> bool:
+        def ready(_script: str, *, timeout: int) -> bool:
             cancelled.set()
             return True
 
@@ -1318,12 +1324,12 @@ class BrowserMonitorTests(unittest.TestCase):
 
         def locate(selector: str) -> Mock:
             if selector == DICTATION_CANCEL_SELECTORS[0]:
-                return Mock(last=cancel)
+                return _button_locator(cancel)
             if selector == 'button[aria-label="Start dictation"]':
-                return Mock(last=microphone)
+                return _button_locator(microphone)
             if selector == 'button[aria-label="Submit dictation"]':
-                return Mock(last=end_button)
-            return Mock(last=unavailable)
+                return _button_locator(end_button)
+            return _button_locator(unavailable)
 
         page.locator.side_effect = locate
         monitor = BrowserMonitor()
@@ -1342,6 +1348,45 @@ class BrowserMonitorTests(unittest.TestCase):
                 monitor._start_browser_dictation(Mock())
         microphone.click.assert_called_once_with(timeout=1_000, force=True, no_wait_after=True)
 
+    def test_stale_cancel_recovers_after_control_detaches_and_composer_is_idle(self):
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        monitor = BrowserMonitor()
+        button = Mock()
+        button.evaluate.side_effect = PlaywrightTimeoutError("Control was removed")
+        with patch.object(monitor, "_dictation_result_snapshot", return_value=("Original text", True)):
+            self.assertFalse(monitor._click_dictation_control(Mock(), button, allow_idle=True))
+        button.click.assert_not_called()
+
+    def test_busy_stale_cancel_still_fails_if_composer_never_becomes_idle(self):
+        monitor = BrowserMonitor()
+        button = Mock()
+        button.evaluate.return_value = False
+        with (
+            patch("live_gpt.browser.time.monotonic", side_effect=[0, 0, 6]),
+            patch.object(monitor, "_dictation_result_snapshot", return_value=(None, False)),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "dictation control is not ready"):
+                monitor._click_dictation_control(Mock(), button, allow_idle=True)
+        button.click.assert_not_called()
+
+    def test_release_while_stale_cancel_becomes_ready_skips_click(self):
+        import threading
+
+        monitor = BrowserMonitor()
+        cancelled = threading.Event()
+        monitor._dictation_start_cancelled = cancelled
+        button = Mock()
+
+        def ready(_script, **_kwargs):
+            cancelled.set()
+            return True
+
+        button.evaluate.side_effect = ready
+        with self.assertRaisesRegex(RuntimeError, "Dictation cancelled"):
+            monitor._click_dictation_control(Mock(), button, starting=True, allow_idle=True)
+        button.click.assert_not_called()
+
     def test_cancel_dictation_restores_original_composer_text(self) -> None:
         composer = Mock()
         cancel = Mock()
@@ -1354,8 +1399,8 @@ class BrowserMonitorTests(unittest.TestCase):
             if selector == CHATGPT_COMPOSER_SELECTOR:
                 return Mock(first=composer)
             if selector == DICTATION_CANCEL_SELECTORS[0]:
-                return Mock(last=cancel)
-            return Mock(last=unavailable)
+                return _button_locator(cancel)
+            return _button_locator(unavailable)
 
         page.locator.side_effect = locate
         monitor = BrowserMonitor()
@@ -1431,8 +1476,8 @@ class BrowserMonitorTests(unittest.TestCase):
             if selector == CHATGPT_COMPOSER_SELECTOR:
                 return Mock(first=composer)
             if selector == 'button[aria-label="Submit dictation"]':
-                return Mock(last=done)
-            return Mock(last=unavailable)
+                return _button_locator(done)
+            return _button_locator(unavailable)
 
         page.locator.side_effect = locate
         browser = Mock(contexts=[Mock(pages=[page])])
@@ -1481,8 +1526,8 @@ class BrowserMonitorTests(unittest.TestCase):
             if selector == CHATGPT_COMPOSER_SELECTOR:
                 return Mock(first=composer)
             if selector == 'button[aria-label="Submit dictation"]':
-                return Mock(last=done)
-            return Mock(last=unavailable)
+                return _button_locator(done)
+            return _button_locator(unavailable)
 
         page.locator.side_effect = locate
         monitor = BrowserMonitor()
@@ -1665,6 +1710,11 @@ class BrowserMonitorTests(unittest.TestCase):
         )
         requested: list[str] = []
         finished: list[tuple[bool, str]] = []
+        events = []
+        monitor.local_voice_updated.connect(
+            lambda _text, final: events.append("prepare audio") if final else None
+        )
+        monitor.response_finished.connect(lambda *_args: events.append("reply finished"))
         monitor.local_voice_requested.connect(requested.append)
         monitor.response_finished.connect(
             lambda success, message: finished.append((success, message))
@@ -1679,6 +1729,7 @@ class BrowserMonitorTests(unittest.TestCase):
 
         read.assert_not_called()
         self.assertEqual(requested, ["Local reply"])
+        self.assertEqual(events, ["prepare audio", "reply finished"])
         self.assertEqual(
             finished,
             [(True, "Reply complete · Local voice queued")],

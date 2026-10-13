@@ -1,0 +1,21 @@
+version = 1
+name = "live-gpt"
+
+[setup]
+script = ""
+
+[setup.win32]
+script = '''
+if (-not (Test-Path -LiteralPath '.\.venv\Scripts\python.exe')) {
+    & 'E:\Python312\python.exe' -m venv .venv
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create the Python environment.' }
+}
+& '.\.venv\Scripts\python.exe' -m pip install -e .
+if ($LASTEXITCODE -ne 0) { throw 'Could not install the project dependencies.' }
+'''
+
+[[actions]]
+name = "Run main.py"
+icon = "run"
+command = '& .\.venv\Scripts\python.exe -u .\main.py'
+platform = "win32"

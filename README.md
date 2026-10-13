@@ -123,9 +123,16 @@ files, or both must be blank to use the installation's configured models.
 Incomplete pairs are not saved and cannot be checked or played. Changing the
 pair restarts the local server before the next synthesis; clearing both restores
 the installation defaults.
+The NVIDIA GPU selector defaults to GPU 0 (the first GPU). GPT-SoVITS always
+loads models on the selected CUDA device in FP16 and reports its name in the
+check result and logs. Changing GPUs reloads the server on the next check or
+playback. A CUDA-enabled embedded PyTorch runtime is required; CPU fallback is
+disabled, and an unavailable GPU causes a visible startup error.
 
 Live GPT copies `sovits_server.py` into the selected installation and runs it with
-`runtime/python.exe`. It preloads the model, reuses reference-audio features, and
+`runtime/python.exe`. Before reporting ready, it warms pronunciation models and
+performs a silent synthesis with the selected reference voice. First startup can
+take several minutes and has a separate 240-second limit. It reuses reference-audio features and
 streams speech through one audio output. Complete sentences enter the synthesis
 queue while ChatGPT is still generating its reply. If ChatGPT replaces an
 intermediate reply with a final answer, the changed sentences are also read.
@@ -140,6 +147,10 @@ install the Sherpa runtime and download models into the working directory's
 `models` folder. Installation supports official PyPI, Aliyun, and SJTUG without
 changing global pip settings. **Record microphone** tests transcription;
 **Play text** tests GPT-SoVITS playback.
+Synthesis errors appear in the playback status and server output is captured in
+the logs. After warmup, speech streams in sentence fragments. If no audio arrives
+for 30 seconds during playback, Live GPT stops the speech server
+and reports a timeout; the next attempt starts a fresh server.
 
 Hotkey defaults are
 **Right Alt** (record and send with the selected screenshot) and
@@ -195,10 +206,13 @@ a usage-limit notice, Live GPT displays its message, including any reset time,
 and stops waiting for a reply. Prompts rejected before sending stay in the editor
 so they can be sent after usage resets.
 
-Sending switches directly to a full-width two-label subtitle view. While
-ChatGPT responds, its first line shows the sent prompt and its second line
-shows the current status. When **Read aloud** starts, the prompt is removed and
-both lines show the response. During playback, subtitles follow the browser
+Sending switches directly to a subtitle view with four rows by default.
+**Configure → Playing → Subtitle rows** sets the number of rows from 2 to 10;
+changes apply immediately and are saved as `subtitle_rows`. The subtitle panel
+fits the height of those rows even when the overlay is tall. While ChatGPT
+responds, the upper rows show the prompt or incoming response and the last row
+shows the current status. When **Read aloud** starts, all rows show the response.
+During playback, subtitles follow the browser
 media's progress and roll forward one line at a time. Hover over the subtitle
 area to expand a formatted HTML response with paragraphs, lists, tables, and links.
 Reply images load as thumbnails, preserving image galleries. Click an image to
@@ -212,7 +226,7 @@ Code blocks use rounded cards with spacing above them and padding around the tex
 They keep their original line breaks and indentation, with a language label and
 a copy icon that copies only that block's text to the clipboard and briefly shows a checkmark.
 Its height fits the rendered content. Moving
-the pointer outside the whole overlay restores the two-line view at the current playback
+the pointer outside the whole overlay restores the configured rows at the current playback
 line. Use the **×** button in the expanded reply to close it and return to an empty
 message input. Closing the reply stops browser or local read-aloud, including
 queued speech. Citation badges such as “Forever +1” are excluded from subtitles

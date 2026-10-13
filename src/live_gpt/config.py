@@ -25,6 +25,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "chatgpt_window": "",
     "window_geometry": [],
     "window_locked": False,
+    "subtitle_rows": 4,
     "pet_path": "",
     "pet_idle_mode": "always",
     "pet_idle_seconds": 10,
@@ -34,6 +35,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "stt_language": "zh",
     "stt_model": "zh_zipformer_ctc_int8_2025_07_03",
     "sovits_installation": "",
+    "sovits_gpu_index": 0,
     "sovits_ckpt_path": "",
     "sovits_pth_path": "",
     "sovits_text_lang": "auto",
@@ -72,6 +74,10 @@ def _valid_value(key: str, value: Any, default: Any) -> bool:
         return value in ("always", "never", "timed")
     if key == "pet_idle_seconds":
         return 1 <= value <= 3600
+    if key == "subtitle_rows":
+        return 2 <= value <= 10
+    if key == "sovits_gpu_index":
+        return value >= 0
     if key == "version":
         return value == DEFAULT_CONFIG["version"]
     if key == "language":

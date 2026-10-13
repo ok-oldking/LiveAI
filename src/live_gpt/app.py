@@ -344,11 +344,16 @@ class _LocalSpeechThread(QThread):
 
         def produce() -> None:
             try:
+                options = (
+                    {"cancel_event": self._cancel_event}
+                    if isinstance(self.manager, SovitsTtsProvider) else {}
+                )
                 for chunk in stream_synthesis(
                     self.tts_model,
                     self.text,
                     self.speaker,
                     self.language,
+                    **options,
                 ):
                     if self._cancel_event.is_set():
                         break
@@ -616,8 +621,12 @@ class _QueuedLocalSpeechThread(QThread):
                         # when the provider supplies audio without word timestamps.
                         waveforms = []
                         sentence_rate = None
+                        options = (
+                            {"cancel_event": self._cancel_event}
+                            if isinstance(self.manager, SovitsTtsProvider) else {}
+                        )
                         for samples, chunk_rate, _chunk_text in self.manager.synthesize_stream(
-                            self.tts_model, sentence, self.speaker, self.language,
+                            self.tts_model, sentence, self.speaker, self.language, **options,
                         ):
                             if self._cancel_event.is_set():
                                 return
@@ -794,6 +803,7 @@ class _PetDownloadThread(QThread):
 class HotkeyConfigDialog(QDialog):
     """Edit Live GPT settings, including pass-through global shortcuts."""
     pet_settings_changed = Signal(str, str, int)
+    subtitle_rows_changed = Signal(int)
 
     def __init__(
         self,
@@ -810,6 +820,7 @@ class HotkeyConfigDialog(QDialog):
         stt_model: str = "zh_zipformer_ctc_int8_2025_07_03",
         pypi_mirror: str = "default",
         sovits_installation: str = "",
+        sovits_gpu_index: int = 0,
         sovits_ckpt_path: str = "",
         sovits_pth_path: str = "",
         sovits_text_lang: str = "auto",
@@ -1207,6 +1218,22 @@ class HotkeyConfigDialog(QDialog):
         playing_backend_layout.addWidget(self.playing_backend_combo)
         playing_layout.addWidget(playing_backend_card)
 
+        subtitle_card = QFrame()
+        subtitle_card.setObjectName("settingsCard")
+        subtitle_form = QFormLayout(subtitle_card)
+        subtitle_form.setContentsMargins(18, 16, 18, 16)
+        subtitle_title = QLabel(tr("Subtitles"))
+        subtitle_title.setObjectName("settingsCardTitle")
+        subtitle_form.addRow(subtitle_title)
+        self.subtitle_rows_spin = QSpinBox()
+        self.subtitle_rows_spin.setRange(2, 10)
+        values = self.config if self.config is not None else DEFAULT_CONFIG
+        self.subtitle_rows_spin.setValue(int(values["subtitle_rows"]))
+        self.subtitle_rows_spin.setAccessibleName(tr("Subtitle rows"))
+        self.subtitle_rows_spin.setStyleSheet("QSpinBox { color: #f5f7ff; background: #18213b; padding: 8px; border: 1px solid #536080; border-radius: 6px; }")
+        subtitle_form.addRow(tr("Subtitle rows"), self.subtitle_rows_spin)
+        playing_layout.addWidget(subtitle_card)
+
         self.playing_local_card = QFrame()
         self.playing_local_card.setObjectName("settingsCard")
         playing_local_layout = QVBoxLayout(self.playing_local_card)
@@ -1286,6 +1313,26 @@ class HotkeyConfigDialog(QDialog):
         sovits_installation_row.addWidget(self.sovits_installation_edit, 1)
         sovits_installation_row.addWidget(self.sovits_installation_browse_button)
         playing_local_layout.addLayout(sovits_installation_row)
+
+        self.sovits_gpu_combo = QComboBox()
+        self.sovits_gpu_combo.setObjectName("voiceCombo")
+        for index, name in SovitsTtsProvider.nvidia_gpus():
+            self.sovits_gpu_combo.addItem(f"GPU {index}: {name}", index)
+        if self.sovits_gpu_combo.count() == 0:
+            self.sovits_gpu_combo.addItem(tr("NVIDIA GPU 0 (first GPU)"), 0)
+        if self.sovits_gpu_combo.findData(sovits_gpu_index) < 0:
+            self.sovits_gpu_combo.addItem(tr("NVIDIA GPU {index} (unavailable)", index=sovits_gpu_index), sovits_gpu_index)
+        self.sovits_gpu_combo.setCurrentIndex(self.sovits_gpu_combo.findData(sovits_gpu_index))
+        gpu_row = QHBoxLayout()
+        gpu_row.setSpacing(8)
+        gpu_row.addWidget(QLabel(tr("NVIDIA GPU")))
+        gpu_row.addWidget(self.sovits_gpu_combo, 1)
+        playing_local_layout.addLayout(gpu_row)
+        gpu_note = QLabel(tr("NVIDIA GPUs only. The first GPU is selected by default. CPU fallback is disabled."))
+        gpu_note.setObjectName("settingsNote")
+        gpu_note.setWordWrap(True)
+        playing_local_layout.addWidget(gpu_note)
+        self.sovits_gpu_combo.currentIndexChanged.connect(self._sovits_gpu_changed)
 
         self.sovits_reference_title = QLabel(tr("Reference voice"))
         self.sovits_reference_title.setObjectName("voiceFieldGroupTitle")
@@ -1785,6 +1832,7 @@ class HotkeyConfigDialog(QDialog):
             self._check_voice_page_when_needed("tts")
 
     def _connect_auto_save(self) -> None:
+        self.subtitle_rows_spin.valueChanged.connect(self._save_subtitle_rows)
         self.capture_cursor_checkbox.toggled.connect(
             lambda enabled: self._save_setting("capture_cursor", enabled)
         )
@@ -1830,6 +1878,10 @@ class HotkeyConfigDialog(QDialog):
             editor.keySequenceChanged.connect(
                 lambda _sequence: self._save_hotkeys()
             )
+
+    def _save_subtitle_rows(self, rows: int) -> None:
+        self._save_setting("subtitle_rows", rows)
+        self.subtitle_rows_changed.emit(rows)
 
     def _build_screenshots_page(self) -> None:
         page = QWidget()
@@ -2118,6 +2170,13 @@ class HotkeyConfigDialog(QDialog):
     def sovits_ckpt_path(self) -> str:
         return self.sovits_ckpt_edit.text().strip()
 
+    def sovits_gpu_index(self) -> int:
+        return int(self.sovits_gpu_combo.currentData())
+
+    def _sovits_gpu_changed(self) -> None:
+        self._voice_status_checked["tts"] = False
+        self._save_setting("sovits_gpu_index", self.sovits_gpu_index())
+
     def sovits_pth_path(self) -> str:
         return self.sovits_pth_edit.text().strip()
 
@@ -2175,6 +2234,9 @@ class HotkeyConfigDialog(QDialog):
         self.sovits_manager.configure(
             self.sovits_prompt_text(), self.sovits_prompt_lang(),
             self.sovits_ckpt_path(), self.sovits_pth_path(),
+            gpu_index=self.sovits_gpu_index(),
+            ref_audio_path=self.sovits_ref_audio_path(),
+            text_lang=self.sovits_text_lang(),
         )
         self.sovits_manager.model_status("tts", self.sovits_installation())
         return self.sovits_manager
@@ -2333,6 +2395,7 @@ class HotkeyConfigDialog(QDialog):
         worker = self._voice_worker
         self._voice_worker = None
         self._voice_operation_action = ""
+        self._set_voice_busy(False)
         for button in (self.recording_cancel_button, self.playing_cancel_button):
             button.hide()
             button.setEnabled(False)
@@ -2363,6 +2426,7 @@ class HotkeyConfigDialog(QDialog):
         self.stt_language_combo.setEnabled(not busy)
         self.stt_model_combo.setEnabled(not busy)
         self.sovits_installation_edit.setEnabled(not busy)
+        self.sovits_gpu_combo.setEnabled(not busy)
         self.sovits_text_lang_combo.setEnabled(not busy)
         self.sovits_ref_audio_edit.setEnabled(not busy)
         self.sovits_prompt_text_edit.setEnabled(not busy)
@@ -3268,18 +3332,16 @@ class OverlayWindow(QMainWindow):
         subtitle_layout = QVBoxLayout(self.subtitle_panel)
         subtitle_layout.setContentsMargins(16, 8, 16, 8)
         subtitle_layout.setSpacing(0)
-        self.subtitle_line_one = QLabel()
-        self.subtitle_line_one.setObjectName("subtitleLine")
-        self.subtitle_line_one.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
-        self.subtitle_line_one.setWordWrap(False)
-        self.subtitle_line_two = QLabel()
-        self.subtitle_line_two.setObjectName("subtitleLine")
-        self.subtitle_line_two.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
-        self.subtitle_line_two.setWordWrap(False)
+        self._subtitle_row_count = DEFAULT_CONFIG["subtitle_rows"]
+        self.subtitle_labels = []
+        for _ in range(10):
+            label = QLabel()
+            label.setObjectName("subtitleLine")
+            label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            label.setWordWrap(False)
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            self.subtitle_labels.append(label)
+        self.subtitle_line_one, self.subtitle_line_two = self.subtitle_labels[:2]
         self.subtitle_full_text = ReplyDisplay()
         self.subtitle_full_text.setObjectName("subtitleFullText")
         self.subtitle_full_text.setReadOnly(True)
@@ -3307,19 +3369,19 @@ class OverlayWindow(QMainWindow):
         self._subtitle_dismissed = False
         self._subtitle_expanded = False
         self._subtitle_reading_active = False
+        self._subtitle_playback_pending = False
         self._subtitle_reading_started = False
         self._subtitle_status_text = ""
         self._sent_message_text = ""
         self._subtitle_collapsed_geometry: QRect | None = None
         self._subtitle_hover_origin: QPoint | None = None
-        subtitle_layout.addWidget(self.subtitle_line_one, 1)
-        subtitle_layout.addWidget(self.subtitle_line_two, 1)
+        for label in self.subtitle_labels:
+            subtitle_layout.addWidget(label)
         subtitle_layout.addWidget(self.subtitle_full_text, 1)
         self.subtitle_panel.hide()
         self._subtitle_hover_widgets = (
             self.subtitle_panel,
-            self.subtitle_line_one,
-            self.subtitle_line_two,
+            *self.subtitle_labels,
             self.subtitle_full_text,
             self.subtitle_full_text.viewport(),
             self.reply_close_button,
@@ -3378,7 +3440,7 @@ class OverlayWindow(QMainWindow):
         self.error_banner.setFixedHeight(120)
         self.error_banner.hide()
         panel_layout.addWidget(self.error_banner)
-        recording_layout = QHBoxLayout()
+        self._recording_layout = recording_layout = QHBoxLayout()
         recording_layout.setSpacing(16)
         try:
             self.pet = PetWidget(pet_path)
@@ -3387,7 +3449,7 @@ class OverlayWindow(QMainWindow):
             self.pet = PetWidget()
         recording_layout.addWidget(self.pet, 0, Qt.AlignmentFlag.AlignVCenter)
         recording_layout.addWidget(self.transcript_area, 1)
-        recording_layout.addWidget(self.subtitle_panel, 1)
+        recording_layout.addWidget(self.subtitle_panel, 1, Qt.AlignmentFlag.AlignVCenter)
         recording_layout.addWidget(self.dictation_panel, 1)
 
         recording_layout.addWidget(
@@ -3590,6 +3652,7 @@ class OverlayWindow(QMainWindow):
         )
         self.setStyleSheet(self.styleSheet() + COMBOBOX_STYLE)
         self._set_chrome_visible(False)
+        self._fit_subtitle_rows()
         self._translations = UiTranslations(self)
         localization.changed.connect(self._retranslate_status)
 
@@ -3671,7 +3734,7 @@ class OverlayWindow(QMainWindow):
             "failed" if self._pet_error else
             "waiting" if self._pet_listening else
             "review" if self._pet_playing else
-            "running" if self._pet_response_pending else "idle"
+            "running" if self._pet_response_pending or self._subtitle_playback_pending else "idle"
         )
         self.pet.set_state(state)
         self._track_pointer(QCursor.pos())
@@ -3862,6 +3925,7 @@ class OverlayWindow(QMainWindow):
         self._subtitle_mode_active = True
         self._subtitle_dismissed = False
         self._subtitle_reading_active = False
+        self._subtitle_playback_pending = False
         self._subtitle_reading_started = False
         self._subtitle_hover_origin = None
         self._sent_message_text = " ".join(sent_text.split())
@@ -3877,6 +3941,7 @@ class OverlayWindow(QMainWindow):
         self.transcript_area.hide()
         self.dictation_panel.hide()
         self.subtitle_panel.show()
+        self._ensure_subtitle_rows_fit()
         self.microphone_button.setVisible(True)
         self._set_subtitle_status(message)
         self.set_status(message)
@@ -3924,10 +3989,19 @@ class OverlayWindow(QMainWindow):
             self._set_subtitle_status(message)
         self.schedule_auto_hide(5_000)
 
+    def prepare_reading(self) -> None:
+        if not self._subtitle_mode_active or self._subtitle_dismissed or self._subtitle_reading_active:
+            return
+        self._subtitle_playback_pending = True
+        self.show_for_auto_hide()
+        self._refresh_pet()
+        self.schedule_auto_hide()
+
     def begin_reading(self, message: str) -> None:
         if self._subtitle_dismissed:
             return
         self._playback_input_timer.stop()
+        self._subtitle_playback_pending = False
         self._pet_playing = True
         self._pet_error = False
         self._refresh_pet()
@@ -3944,6 +4018,7 @@ class OverlayWindow(QMainWindow):
         self._subtitle_mode_active = True
         self.transcript_area.hide()
         self.subtitle_panel.show()
+        self._ensure_subtitle_rows_fit()
         self.microphone_button.setVisible(True)
         if not self._reading_full_text:
             self._set_subtitle_status(message)
@@ -4048,6 +4123,54 @@ class OverlayWindow(QMainWindow):
                 return index
         return len(lines) - 1
 
+    def set_subtitle_rows(self, rows: int) -> None:
+        if type(rows) is not int or not 2 <= rows <= 10:
+            return
+        self._subtitle_row_count = rows
+        if not self._subtitle_expanded:
+            self._fit_subtitle_rows()
+        if self._subtitle_reading_started and self._reading_full_text:
+            self._render_reading_subtitle(resized=True)
+        else:
+            self._set_subtitle_status(self._subtitle_status_text)
+
+    def _fit_subtitle_rows(self) -> None:
+        layout = self.subtitle_panel.layout()
+        row_height = max(
+            self.subtitle_line_one.fontMetrics().lineSpacing(),
+            self.subtitle_line_one.sizeHint().height(),
+        )
+        for index, label in enumerate(self.subtitle_labels):
+            label.setFixedHeight(row_height)
+            label.setVisible(index < self._subtitle_row_count)
+        margins = layout.contentsMargins()
+        self.subtitle_panel.setFixedHeight(
+            row_height * self._subtitle_row_count
+            + layout.spacing() * (self._subtitle_row_count - 1)
+            + margins.top() + margins.bottom() + 2 * self.subtitle_panel.frameWidth()
+        )
+        self._ensure_subtitle_rows_fit()
+
+    def _ensure_subtitle_rows_fit(self) -> None:
+        if self.isHidden() or not self._subtitle_mode_active or self._subtitle_expanded:
+            return
+        self.panel.layout().activate()
+        self.centralWidget().layout().activate()
+        required_height = self.centralWidget().minimumSizeHint().height()
+        if self.height() >= required_height:
+            return
+        bounds = self.screen().availableGeometry()
+        geometry = QRect(self.geometry())
+        geometry.setTop(max(bounds.top(), geometry.bottom() - required_height + 1))
+        geometry.setHeight(required_height)
+        self._fitting_subtitle = True
+        try:
+            if self._position_locked:
+                self.setFixedHeight(required_height)
+            self.setGeometry(geometry)
+        finally:
+            self._fitting_subtitle = False
+
     def _render_reading_subtitle(
         self,
         *,
@@ -4055,8 +4178,8 @@ class OverlayWindow(QMainWindow):
     ) -> None:
         lines = self._subtitle_lines()
         if not lines:
-            self.subtitle_line_one.clear()
-            self.subtitle_line_two.clear()
+            for label in self.subtitle_labels:
+                label.clear()
             self._subtitle_line_index = -1
             return
 
@@ -4072,13 +4195,12 @@ class OverlayWindow(QMainWindow):
             return
 
         self._subtitle_line_index = target_index
-        visible_lines = lines[target_index:target_index + 2]
-        self.subtitle_line_one.setText(visible_lines[0])
-        self.subtitle_line_two.setText(
-            visible_lines[1] if len(visible_lines) > 1 else ""
-        )
+        visible_lines = lines[target_index:target_index + self._subtitle_row_count]
+        for index, label in enumerate(self.subtitle_labels):
+            label.setText(visible_lines[index] if index < len(visible_lines) else "")
 
     def finish_reading(self, success: bool, message: str) -> None:
+        self._subtitle_playback_pending = False
         self._pet_playing = False
         self._pet_response_pending = False
         self._pet_error = not success
@@ -4091,6 +4213,8 @@ class OverlayWindow(QMainWindow):
         self._subtitle_reading_active = False
         self.microphone_button.setVisible(True)
         self.set_status(message, error=not success)
+        if not self._subtitle_reading_started:
+            self._set_subtitle_status(message)
         self.schedule_auto_hide(5_000)
 
     def _finish_playback_input_delay(self) -> None:
@@ -4100,16 +4224,17 @@ class OverlayWindow(QMainWindow):
     def _set_subtitle_status(self, message: str) -> None:
         message = translate_message(message)
         self._subtitle_status_text = message
+        for label in self.subtitle_labels:
+            label.clear()
         if self._subtitle_mode_active and not self._subtitle_reading_started:
             lines = self._subtitle_lines()
-            preview = lines[0] if lines else self._sent_message_text
-            self.subtitle_line_one.setText(
-                "" if " ".join(preview.split()) == " ".join(message.split()) else preview
-            )
-            self.subtitle_line_two.setText(message)
+            preview_lines = lines[:self._subtitle_row_count - 1] if lines else [self._sent_message_text]
+            if " ".join(" ".join(preview_lines).split()) != " ".join(message.split()):
+                for label, line in zip(self.subtitle_labels, preview_lines):
+                    label.setText(line)
+            self.subtitle_labels[self._subtitle_row_count - 1].setText(message)
         else:
             self.subtitle_line_one.setText(message)
-            self.subtitle_line_two.clear()
         if not self._subtitle_expanded:
             self._render_full_reply()
 
@@ -4145,8 +4270,11 @@ class OverlayWindow(QMainWindow):
         self._subtitle_outside_timer.start()
         self._subtitle_collapsed_geometry = QRect(self.geometry())
         self._render_full_reply()
-        self.subtitle_line_one.hide()
-        self.subtitle_line_two.hide()
+        for label in self.subtitle_labels:
+            label.hide()
+        self.subtitle_panel.setMinimumHeight(0)
+        self.subtitle_panel.setMaximumHeight(16_777_215)
+        self._recording_layout.setAlignment(self.subtitle_panel, Qt.AlignmentFlag(0))
         self.subtitle_panel.layout().setContentsMargins(12, 12, 12, 12)
         self.subtitle_full_text.show()
         self.reply_close_button.show()
@@ -4214,8 +4342,8 @@ class OverlayWindow(QMainWindow):
         self.subtitle_full_text.hide()
         self.reply_close_button.hide()
         self.subtitle_panel.layout().setContentsMargins(16, 8, 16, 8)
-        self.subtitle_line_one.show()
-        self.subtitle_line_two.show()
+        self._recording_layout.setAlignment(self.subtitle_panel, Qt.AlignmentFlag.AlignVCenter)
+        self._fit_subtitle_rows()
         if self._subtitle_collapsed_geometry is not None:
             self._fitting_subtitle = True
             try:
@@ -4225,6 +4353,7 @@ class OverlayWindow(QMainWindow):
             finally:
                 self._fitting_subtitle = False
         self._subtitle_collapsed_geometry = None
+        self._ensure_subtitle_rows_fit()
         if self._subtitle_reading_started and self._reading_full_text:
             self._render_reading_subtitle(resized=True)
         else:
@@ -4250,6 +4379,7 @@ class OverlayWindow(QMainWindow):
         self._subtitle_mode_active = False
         self._subtitle_dismissed = True
         self._subtitle_reading_active = False
+        self._subtitle_playback_pending = False
         self._subtitle_reading_started = False
         self.subtitle_panel.hide()
         self.dictation_panel.hide()
@@ -4507,6 +4637,7 @@ class OverlayWindow(QMainWindow):
         if self._subtitle_mode_active and (
             not self.transcript_area.is_response_complete
             or self._subtitle_reading_active
+            or self._subtitle_playback_pending
             or self._subtitle_expanded
         ):
             return False
@@ -4555,6 +4686,7 @@ class OverlayWindow(QMainWindow):
         )
         content_visible = (
             visible or self._pet_listening or self._pet_response_pending
+            or self._subtitle_playback_pending
             or self._pet_playing or self._playback_input_timer.isActive()
         )
         if (visible == self._chrome_visible
@@ -4925,11 +5057,13 @@ class TrayController:
         self._local_voice_seen_sentences: Counter[str] = Counter()
         self._local_voice_interrupted = False
         self._local_voice_error: str | None = None
+        self._local_voice_playback_error: str | None = None
         self._pending_local_announcements: list[tuple[str, bool]] = []
         self._stt_preload_thread: threading.Thread | None = None
         self._local_tts_preload_thread: threading.Thread | None = None
         self._migrate_legacy_hotkeys()
         self.window = OverlayWindow(str(self.config["pet_path"]))
+        self.window.set_subtitle_rows(int(self.config["subtitle_rows"]))
         self.window.pet.set_idle_behavior(str(self.config["pet_idle_mode"]), int(self.config["pet_idle_seconds"]))
         self.window.set_preferred_capture_source(
             str(self.config["capture_source"])
@@ -5204,6 +5338,7 @@ class TrayController:
                 stt_model=str(self.config["stt_model"]),
                 pypi_mirror=str(self.config["pypi_mirror"]),
                 sovits_installation=str(self.config["sovits_installation"]),
+                sovits_gpu_index=int(self.config["sovits_gpu_index"]),
                 sovits_ckpt_path=str(self.config["sovits_ckpt_path"]),
                 sovits_pth_path=str(self.config["sovits_pth_path"]),
                 sovits_text_lang=str(self.config["sovits_text_lang"]),
@@ -5215,6 +5350,7 @@ class TrayController:
                 sovits_manager=self.sovits_manager,
             )
             dialog.pet_settings_changed.connect(self._apply_pet_settings)
+            dialog.subtitle_rows_changed.connect(self.window.set_subtitle_rows)
             dialog.exec()
 
             sequences = self._load_hotkey_sequences()
@@ -5293,6 +5429,9 @@ class TrayController:
                 str(self.config["sovits_prompt_lang"]),
                 str(self.config["sovits_ckpt_path"]),
                 str(self.config["sovits_pth_path"]),
+                gpu_index=int(self.config.get("sovits_gpu_index", 0)),
+                ref_audio_path=str(self.config["sovits_ref_audio_path"]),
+                text_lang=str(self.config["sovits_text_lang"]),
             )
         except ValueError as error:
             logger.warning(f"GPT-SoVITS playback configuration is invalid: {error}")
@@ -5341,7 +5480,8 @@ class TrayController:
         return sentences, consumed
 
     def _ensure_local_speech_worker(self, *, display_playback: bool = True) -> _QueuedLocalSpeechThread | None:
-        if getattr(self, "_shutting_down", False):
+        if (getattr(self, "_shutting_down", False)
+                or getattr(self, "_local_voice_playback_error", None)):
             return None
         if self._local_speech_thread is None:
             configuration = self._local_tts_configuration()
@@ -5355,6 +5495,8 @@ class TrayController:
                 worker.progress.connect(self.window.set_reading_subtitle)
             worker.completed.connect(self._on_local_speech_completed)
             worker.finished.connect(self._local_speech_finished)
+            if display_playback:
+                self.window.prepare_reading()
             worker.start()
         worker = self._local_speech_thread
         return worker if isinstance(worker, _QueuedLocalSpeechThread) else None
@@ -5404,6 +5546,9 @@ class TrayController:
         if getattr(self, "_shutting_down", False):
             return
         self.window.set_response_finished(success, message)
+        playback_error = getattr(self, "_local_voice_playback_error", None)
+        if success and playback_error and not getattr(self, "_local_voice_interrupted", False):
+            self.window.finish_reading(False, playback_error)
         # An announcement can start playback before any reply text exists.
         # Close that queue even if the browser fails without producing text.
         worker = self._local_speech_thread
@@ -5416,7 +5561,8 @@ class TrayController:
                 worker.finish_queue()
 
     def _update_local_voice(self, text: str, final: bool) -> None:
-        if getattr(self, "_local_voice_interrupted", False):
+        if (getattr(self, "_local_voice_interrupted", False)
+                or getattr(self, "_local_voice_playback_error", None)):
             return
         text = text.strip()
         if not text:
@@ -5548,6 +5694,8 @@ class TrayController:
     def _on_local_speech_completed(self, success: bool, message: str) -> None:
         if getattr(self, "_local_voice_interrupted", False):
             return
+        if not success:
+            self._local_voice_playback_error = message
         if getattr(self, "_dictation_state", "idle") == "idle":
             error = getattr(self, "_local_voice_error", None)
             if error:
@@ -5632,6 +5780,7 @@ class TrayController:
         self._local_voice_interrupted = True
         self._pending_local_announcements = []
         self._local_voice_error = None
+        self._local_voice_playback_error = None
         self.browser_monitor.request_stop_reading(message="Playback stopped")
         worker = getattr(self, "_local_speech_thread", None)
         if worker is not None:
@@ -6076,6 +6225,7 @@ class TrayController:
         self.window.set_status(tr("Sending to ChatGPT…"))
         self._local_voice_interrupted = False
         self._local_voice_error = None
+        self._local_voice_playback_error = None
         self._local_voice_longest_text = ""
         self._local_voice_queued_sentences = []
         self._local_voice_seen_sentences = Counter()

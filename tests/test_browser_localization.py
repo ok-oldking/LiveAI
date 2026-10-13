@@ -1180,6 +1180,87 @@ class BrowserLocalizationTests(unittest.TestCase):
                 except Error:
                     pass
 
+    def test_first_dictation_recovers_when_startup_controls_return_to_idle(self):
+        from playwright.sync_api import Error
+
+        fixtures = Path(__file__).parent / "fixtures"
+        startup = (fixtures / "chatgpt_startup_dictation_composer.html").read_text(encoding="utf-8")
+        idle = (fixtures / "chatgpt_dictate_controls.html").read_text(encoding="utf-8")
+        self.page.route("https://chatgpt.com/c/startup-dictation", lambda route: route.fulfill(
+            body='<form onsubmit="return false">' + startup + '<div id="idle" hidden>' + idle
+                + '</div><button aria-label="Dictate" hidden>Stale microphone</button></form>',
+            content_type="text/html",
+        ))
+        self.page.goto("https://chatgpt.com/c/startup-dictation")
+        self.page.evaluate('''() => {
+            const footer = document.querySelector('[data-composer-footer-responsive]');
+            const input = document.querySelector('[data-composer-input]');
+            const idle = document.querySelector('#idle');
+            const microphone = idle.querySelector('[aria-label="Dictate"]');
+            const cancel = footer.querySelector('[aria-label="Cancel dictation"]');
+            cancel.disabled = true;
+            window.cancelCount = 0;
+            window.startCount = 0;
+            cancel.onclick = () => window.cancelCount++;
+            microphone.onclick = () => {
+                window.startCount++;
+                idle.hidden = true;
+                input.hidden = true;
+                footer.hidden = false;
+                cancel.disabled = false;
+            };
+            setTimeout(() => {
+                footer.hidden = true;
+                input.hidden = false;
+                idle.hidden = false;
+            }, 300);
+        }''')
+        monitor = BrowserMonitor()
+        started = []
+        monitor.dictation_started.connect(lambda *args: started.append(args))
+        monitor.request_start_dictation(str(id(self.page)))
+        monitor._process_dictation_requests(self.browser, Error)
+        self.assertEqual(started, [(True, "Browser dictation is listening")])
+        self.assertEqual(self.page.evaluate("window.startCount"), 1)
+        self.assertEqual(self.page.evaluate("window.cancelCount"), 0)
+
+    def test_startup_cancellation_tracks_replaced_controls_and_ignores_hidden_duplicates(self):
+        fixtures = Path(__file__).parent / "fixtures"
+        startup = (fixtures / "chatgpt_startup_dictation_composer.html").read_text(encoding="utf-8")
+        idle = (fixtures / "chatgpt_dictate_controls.html").read_text(encoding="utf-8")
+        self.page.set_content('<form onsubmit="return false">' + startup
+                              + '<div id="idle" hidden>' + idle + '</div></form>')
+        self.page.evaluate('''() => {
+            const footer = document.querySelector('[data-composer-footer-responsive]');
+            footer.querySelector('[aria-label="Cancel dictation"]').disabled = true;
+            window.cancelCount = 0;
+            window.sentEarly = false;
+            setTimeout(() => {
+                const replacement = footer.cloneNode(true);
+                footer.hidden = true;
+                footer.after(replacement);
+                const cancel = replacement.querySelector('[aria-label="Cancel dictation"]');
+                cancel.disabled = false;
+                cancel.onclick = () => {
+                    window.cancelCount++;
+                    replacement.hidden = true;
+                    document.querySelector('[data-composer-input]').hidden = false;
+                    document.querySelector('#idle').hidden = false;
+                };
+                replacement.querySelector('[aria-label="Transcribe and send"]').onclick = () => {
+                    window.sentEarly = true;
+                };
+                const hiddenDuplicate = replacement.cloneNode(true);
+                hiddenDuplicate.hidden = true;
+                replacement.after(hiddenDuplicate);
+            }, 300);
+        }''')
+        monitor = BrowserMonitor()
+        self.assertTrue(monitor._cancel_existing_dictation(self.page, starting=True))
+        self.assertEqual(self.page.evaluate("window.cancelCount"), 1)
+        self.assertFalse(self.page.evaluate("window.sentEarly"))
+        self.assertTrue(monitor._dictation_result_snapshot(self.page)[1])
+
     def test_pasted_active_dictation_footer_stops_and_cancels_without_sending(self):
         from live_gpt.browser import DICTATION_END_SELECTORS
 

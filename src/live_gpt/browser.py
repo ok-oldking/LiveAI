@@ -865,7 +865,7 @@ class BrowserMonitor(QThread):
                 if request.action == "start":
                     self._dictation_start_cancelled = request.cancelled
                     self._check_dictation_start_cancelled()
-                    self._cancel_existing_dictation(page)
+                    self._cancel_existing_dictation(page, starting=True)
                     # Clear a previous prompt's screenshot before installing
                     # this one; attachment requests use a separate queue.
                     self._process_attachment_requests(browser, playwright_error)
@@ -1254,11 +1254,13 @@ class BrowserMonitor(QThread):
                 "ChatGPT response is stable; handing reply to local voice "
                 f"characters={len(snapshot.text)}"
             )
+            # Reserve subtitle visibility while local synthesis prepares its
+            # first audio, before the UI leaves the responding state.
+            self.local_voice_updated.emit(snapshot.text, True)
             self.response_finished.emit(
                 True,
                 "Reply complete · Local voice queued",
             )
-            self.local_voice_updated.emit(snapshot.text, True)
             self.local_voice_requested.emit(snapshot.text)
             state.active_response = None
             return
@@ -1668,26 +1670,38 @@ class BrowserMonitor(QThread):
 
     def _click_dictation_control(
         self, page: Any, button: Any, *, starting: bool = False,
-    ) -> None:
+        allow_idle: bool = False,
+    ) -> bool:
         """Click a ready dictation control even while its layout is animating."""
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             if starting:
                 self._check_dictation_start_cancelled()
             elif self._stop_requested:
                 raise RuntimeError("Dictation cancelled")
-            if button.evaluate("""element =>
-                !!element.getClientRects().length && !element.disabled
-                && !element.closest('[inert], [aria-disabled="true"]')
-                && element.getAttribute('aria-busy') !== 'true'
-            """):
-                if starting:
-                    self._check_dictation_start_cancelled()
-                # Upload animations can keep the button moving. Readiness is
-                # checked above; force skips the layout-stability wait while
-                # preserving a real pointer click for microphone activation.
-                button.click(timeout=1_000, force=True, no_wait_after=True)
-                return
+            try:
+                if button.evaluate("""element =>
+                    !!element.getClientRects().length && !element.disabled
+                    && !element.closest('[inert], [aria-disabled="true"]')
+                    && element.getAttribute('aria-busy') !== 'true'
+                """, timeout=500):
+                    if starting:
+                        self._check_dictation_start_cancelled()
+                    # Upload animations can keep the button moving. Readiness is
+                    # checked above; force skips the layout-stability wait while
+                    # preserving a real pointer click for microphone activation.
+                    button.click(timeout=1_000, force=True, no_wait_after=True)
+                    return True
+            except PlaywrightTimeoutError:
+                # Hydration can replace or remove a control between locating it
+                # and clicking it. Re-resolve the locator on the next poll.
+                pass
+            if allow_idle:
+                text, ready = self._dictation_result_snapshot(page)
+                if text is not None and ready:
+                    return False
             page.wait_for_timeout(100)
         raise RuntimeError("ChatGPT's dictation control is not ready")
 
@@ -1712,11 +1726,11 @@ class BrowserMonitor(QThread):
                 raise RuntimeError("Dictation cancelled")
             raise RuntimeError("ChatGPT did not start listening")
 
-    def _cancel_existing_dictation(self, page: Any) -> bool:
+    def _cancel_existing_dictation(self, page: Any, *, starting: bool = False) -> bool:
         """Return ChatGPT to an idle composer before starting a new session."""
         cancel_button = None
         for selector in DICTATION_CANCEL_SELECTORS:
-            candidate = page.locator(selector).last
+            candidate = page.locator(selector).filter(visible=True).last
             if self._locator_is_visible(candidate):
                 cancel_button = candidate
                 break
@@ -1724,7 +1738,11 @@ class BrowserMonitor(QThread):
             return False
 
         logger.info("Cancelling stale ChatGPT dictation before starting")
-        self._click_dictation_control(page, cancel_button)
+        if not self._click_dictation_control(
+            page, cancel_button, starting=starting, allow_idle=True,
+        ):
+            logger.debug("ChatGPT dictation returned to idle while waiting for cancellation")
+            return False
         if not self._wait_for_dictation_controls_hidden(page):
             raise RuntimeError("ChatGPT's stale dictation did not cancel")
         return True
@@ -1857,7 +1875,7 @@ class BrowserMonitor(QThread):
             if self._dictation_start_cancelled is not None and self._dictation_start_cancelled.is_set():
                 return None
             for selector in selectors:
-                locator = page.locator(selector).last
+                locator = page.locator(selector).filter(visible=True).last
                 if self._locator_is_visible(locator):
                     return locator
             page.wait_for_timeout(100)
@@ -1870,7 +1888,7 @@ class BrowserMonitor(QThread):
         selectors: tuple[str, ...],
     ) -> bool:
         return any(
-            cls._locator_is_visible(page.locator(selector).last)
+            cls._locator_is_visible(page.locator(selector).filter(visible=True).last)
             for selector in selectors
         )
 

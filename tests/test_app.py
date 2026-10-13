@@ -421,6 +421,49 @@ class LocalSpeechThreadTests(unittest.TestCase):
         self.assertEqual(completed, [False])
         self.assertFalse(any(update["fraction"] == 1 for update in progress))
 
+    def test_recording_cancels_sovits_before_first_audio(self) -> None:
+        from live_gpt.voice.sovits_tts import SovitsTtsProvider
+
+        for queued in (False, True):
+            with self.subTest(queued=queued):
+                manager = SovitsTtsProvider()
+                entered = threading.Event()
+
+                def synthesize(*_args, cancel_event):
+                    entered.set()
+                    if not cancel_event.wait(2):
+                        raise RuntimeError("Synthesis was not cancelled")
+                    return ()
+
+                manager.synthesize_stream = Mock(side_effect=synthesize)
+                if queued:
+                    worker = _QueuedLocalSpeechThread(manager, "model", "voice", "en")
+                    worker.enqueue("Hello.", "Hello.")
+                    worker.finish_queue()
+                else:
+                    worker = _LocalSpeechThread(manager, "model", "Hello.", "voice", "en")
+
+                def interrupt():
+                    if entered.wait(2):
+                        worker.request_stop()
+
+                stopper = threading.Thread(target=interrupt, daemon=True)
+                completed = []
+                worker.completed.connect(lambda ok, _message: completed.append(ok))
+                output_stream = Mock()
+                with patch.dict("sys.modules", {"sounddevice": SimpleNamespace(
+                    OutputStream=output_stream, stop=Mock(),
+                )}):
+                    stopper.start()
+                    worker.run()
+                    stopper.join(1)
+
+                self.assertTrue(entered.is_set())
+                self.assertFalse(stopper.is_alive())
+                self.assertIs(manager.synthesize_stream.call_args.kwargs["cancel_event"], worker._cancel_event)
+                self.assertEqual(completed, [False])
+                output_stream.assert_not_called()
+
     def test_response_rewrite_preserves_unchanged_prefix(self) -> None:
         controller = TrayController.__new__(TrayController)
         controller._local_voice_longest_text = "First. Original second."
@@ -999,6 +1042,122 @@ class ReplyDisplayTests(unittest.TestCase):
 
 
 class SettingsDialogTests(unittest.TestCase):
+    def test_sovits_gpu_selector_defaults_to_first_gpu_and_saves_choice(self):
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "live_gpt.app.SovitsTtsProvider.nvidia_gpus", return_value=[(0, "NVIDIA First"), (1, "NVIDIA Second")],
+        ):
+            config = Config(Path(directory) / "config.json")
+            dialog = HotkeyConfigDialog("Right Alt", playing_backend="sovits", config=config)
+            try:
+                self.assertEqual(dialog.sovits_gpu_index(), 0)
+                self.assertEqual(dialog.sovits_gpu_combo.count(), 2)
+                dialog.sovits_gpu_combo.setCurrentIndex(1)
+                self.assertEqual(Config(config.path)["sovits_gpu_index"], 1)
+                self.assertEqual(dialog._voice_provider("tts").gpu_index, 1)
+                dialog._set_voice_busy(True)
+                self.assertFalse(dialog.sovits_gpu_combo.isEnabled())
+                dialog._set_voice_busy(False)
+                self.assertTrue(dialog.sovits_gpu_combo.isEnabled())
+            finally:
+                dialog.close()
+            reopened = HotkeyConfigDialog("Right Alt", sovits_gpu_index=config["sovits_gpu_index"])
+            try:
+                self.assertEqual(reopened.sovits_gpu_index(), 1)
+            finally:
+                reopened.close()
+    def test_sovits_check_restores_play_controls_after_worker_finishes(self):
+        for success in (True, False):
+            with self.subTest(success=success):
+                dialog = HotkeyConfigDialog("Right Alt", playing_backend="sovits")
+                release_check = threading.Event()
+
+                def preload(_model):
+                    if not release_check.wait(3):
+                        raise TimeoutError("Test did not release model check")
+                    if not success:
+                        raise RuntimeError("Model warmup failed")
+                    return "GPT-SoVITS server warmed in 0.1 s"
+
+                try:
+                    with (
+                        patch.object(dialog.sovits_manager, "dependency_status", return_value=(True, "Runtime ready")),
+                        patch.object(dialog.sovits_manager, "model_status", return_value=(True, "Model ready")),
+                        patch.object(dialog.sovits_manager, "preload", side_effect=preload),
+                    ):
+                        dialog.playing_nav_button.click()
+                        QApplication.processEvents()
+                        self.assertIsNotNone(dialog._voice_worker)
+                        self.assertFalse(dialog.voice_play_button.isEnabled())
+                        release_check.set()
+                        deadline = time.monotonic() + 3
+                        while dialog._voice_worker is not None and time.monotonic() < deadline:
+                            QApplication.processEvents()
+                            time.sleep(0.01)
+                    self.assertIsNone(dialog._voice_worker)
+                    self.assertTrue(dialog.voice_play_button.isEnabled())
+                    self.assertTrue(dialog.playing_check_button.isEnabled())
+                    self.assertTrue(dialog.sovits_installation_edit.isEnabled())
+                    self.assertEqual(dialog.playing_status.property("error"), not success)
+                    self.assertIn("Model ready" if success else "Model warmup failed", dialog.playing_status.text())
+                finally:
+                    release_check.set()
+                    if dialog._voice_worker is not None:
+                        dialog._voice_worker.wait(3000)
+                        QApplication.processEvents()
+                    dialog.close()
+
+    def test_failed_speech_test_shows_error_and_restores_controls(self):
+        dialog = HotkeyConfigDialog("Right Alt", playing_backend="sovits")
+        provider = dialog._voice_provider("tts")
+        try:
+            with (
+                patch.object(provider, "synthesize_stream", side_effect=RuntimeError("Reference audio is unreadable")),
+                patch.dict("sys.modules", {"sounddevice": SimpleNamespace()}),
+            ):
+                dialog._start_voice_play_test()
+                deadline = time.monotonic() + 3
+                while dialog._voice_play_thread is not None and time.monotonic() < deadline:
+                    QApplication.processEvents()
+                    time.sleep(0.01)
+            self.assertIsNone(dialog._voice_play_thread)
+            self.assertIn("Reference audio is unreadable", dialog.playing_status.text())
+            self.assertTrue(dialog.playing_status.property("error"))
+            self.assertEqual(dialog.playing_progress.maximum(), 100)
+            self.assertEqual(dialog.playing_progress.value(), 0)
+            self.assertTrue(dialog.voice_play_button.isEnabled())
+            self.assertTrue(dialog.sovits_installation_edit.isEnabled())
+        finally:
+            if dialog._voice_play_thread is not None:
+                dialog._voice_play_thread.request_stop()
+                dialog._voice_play_thread.wait(3000)
+            dialog.close()
+
+    @patch("live_gpt.app.QCursor.pos", return_value=QPoint(-10000, -10000))
+    def test_subtitle_rows_save_and_apply_immediately(self, _cursor):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Config(Path(directory) / "config.json")
+            window = OverlayWindow()
+            dialog = HotkeyConfigDialog("Right Alt", config=config)
+            try:
+                dialog.subtitle_rows_changed.connect(window.set_subtitle_rows)
+                dialog.playing_nav_button.click()
+                self.assertEqual(dialog.settings_pages.currentIndex(), 3)
+                self.assertFalse(dialog.subtitle_rows_spin.isHidden())
+                self.assertEqual(dialog.subtitle_rows_spin.value(), 4)
+                self.assertEqual((dialog.subtitle_rows_spin.minimum(), dialog.subtitle_rows_spin.maximum()), (2, 10))
+                window.begin_response_display("Question")
+                dialog.subtitle_rows_spin.setValue(6)
+                self.assertEqual(Config(config.path)["subtitle_rows"], 6)
+                self.assertEqual(sum(not label.isHidden() for label in window.subtitle_labels), 6)
+            finally:
+                dialog.close()
+                window.close()
+            reopened = HotkeyConfigDialog("Right Alt", config=Config(config.path))
+            try:
+                self.assertEqual(reopened.subtitle_rows_spin.value(), 6)
+            finally:
+                reopened.close()
+
     def test_screenshot_cursor_option_defaults_on_and_saves_immediately(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = Config(Path(directory) / "config.json")
@@ -1717,6 +1876,61 @@ class TrayControllerBrowserTests(unittest.TestCase):
             window.close()
 
     @patch("live_gpt.app.QCursor.pos", return_value=QPoint(-10000, -10000))
+    def test_subtitle_rows_fit_tall_overlay_and_survive_hover_and_lock(self, _cursor):
+        window = OverlayWindow()
+        try:
+            window.resize(1140, 800)
+            window.show()
+            window.begin_response_display("Question")
+            QApplication.processEvents()
+            default_height = window.subtitle_panel.height()
+            for rows in (2, 4, 10):
+                window.set_subtitle_rows(rows)
+                QApplication.processEvents()
+                labels = [label for label in window.subtitle_labels if not label.isHidden()]
+                self.assertEqual(len(labels), rows)
+                for first, second in zip(labels, labels[1:]):
+                    self.assertEqual(second.y(), first.y() + first.height())
+                self.assertLessEqual(window.subtitle_panel.height() - sum(label.height() for label in labels), 20)
+                self.assertGreaterEqual(labels[0].height(), labels[0].sizeHint().height())
+                if rows == 4:
+                    self.assertEqual(window.subtitle_panel.height(), default_height)
+
+            window.set_subtitle_rows(2)
+            window.resize(1140, 240)
+            window.lock_button.setChecked(True)
+            window._expand_subtitle()
+            window.set_subtitle_rows(10)
+            self.assertTrue(all(label.isHidden() for label in window.subtitle_labels))
+            window._collapse_subtitle()
+            QApplication.processEvents()
+            self.assertEqual(sum(not label.isHidden() for label in window.subtitle_labels), 10)
+            self.assertGreaterEqual(window.height(), window.centralWidget().minimumSizeHint().height())
+            self.assertTrue(window.panel.rect().contains(window.subtitle_panel.geometry()))
+            self.assertEqual(window.minimumSize(), window.maximumSize())
+        finally:
+            window.close()
+
+    @patch("live_gpt.app.QCursor.pos", return_value=QPoint(-10000, -10000))
+    def test_playback_displays_configured_rows_and_clears_rows_at_end(self, _cursor):
+        window = OverlayWindow()
+        try:
+            window.show()
+            window.begin_reading("Reading aloud…")
+            text = "\n".join(f"Subtitle row {index}" for index in range(12))
+            for rows in (2, 4, 10):
+                window.set_subtitle_rows(rows)
+                window.set_reading_subtitle({"text": text, "spoken_characters": 0})
+                QApplication.processEvents()
+                self.assertEqual([label.text() for label in window.subtitle_labels[:rows]],
+                                 text.splitlines()[:rows])
+                window.set_reading_subtitle({"text": text, "spoken_characters": len(text)})
+                self.assertEqual(window.subtitle_labels[0].text(), "Subtitle row 11")
+                self.assertTrue(all(not label.text() for label in window.subtitle_labels[1:]))
+        finally:
+            window.close()
+
+    @patch("live_gpt.app.QCursor.pos", return_value=QPoint(-10000, -10000))
     def test_subtitle_hover_expands_and_mouse_leave_collapses(self, _cursor) -> None:
         window = OverlayWindow()
         try:
@@ -1754,6 +1968,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             self.assertTrue(window.subtitle_line_one.isHidden())
             self.assertFalse(window.subtitle_full_text.isHidden())
             self.assertTrue(window._subtitle_outside_timer.isActive())
+            self.assertGreater(window.subtitle_panel.height(), collapsed_panel_height)
             self.assertEqual(
                 window.subtitle_full_text.toPlainText(),
                 response,
@@ -1772,7 +1987,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             self.assertFalse(window.subtitle_line_one.isHidden())
             self.assertTrue(window.subtitle_full_text.isHidden())
             self.assertEqual(window.subtitle_line_one.text(), window._subtitle_lines()[0])
-            self.assertEqual(window.subtitle_line_two.text(), "Writing…")
+            self.assertEqual(window.subtitle_labels[3].text(), "Writing…")
         finally:
             window.close()
 
@@ -1905,10 +2120,10 @@ class TrayControllerBrowserTests(unittest.TestCase):
             window.begin_response_display("Question")
             window.set_response_update("已搜索 6 个网站", "已搜索 6 个网站")
             self.assertEqual(window.subtitle_line_one.text(), "")
-            self.assertEqual(window.subtitle_line_two.text(), "已搜索 6 个网站")
+            self.assertEqual(window.subtitle_labels[3].text(), "已搜索 6 个网站")
             window.set_response_update("正在阅读来源", "Actual reply")
             self.assertEqual(window.subtitle_line_one.text(), "Actual reply")
-            self.assertEqual(window.subtitle_line_two.text(), "正在阅读来源")
+            self.assertEqual(window.subtitle_labels[3].text(), "正在阅读来源")
         finally:
             window.close()
 
@@ -1958,7 +2173,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             self.assertGreater(len(lines), 2)
             self.assertEqual(window.subtitle_line_one.text(), lines[0])
             self.assertEqual(
-                window.subtitle_line_two.text(),
+                window.subtitle_labels[3].text(),
                 "Searching websites…",
             )
 

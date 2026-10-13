@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -14,7 +14,7 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
-from live_gpt.app import OverlayWindow
+from live_gpt.app import OverlayWindow, TrayController, _QueuedLocalSpeechThread
 from live_gpt.app import HotkeyConfigDialog
 from live_gpt.config import Config
 from PySide6.QtGui import QKeySequence
@@ -138,6 +138,81 @@ class PetTests(unittest.TestCase):
             self.assertEqual(w._playback_input_timer.interval(), 5000)
             w._finish_playback_input_delay()
             self.assertFalse(w._content_visible)
+
+    def test_local_subtitles_stay_visible_until_first_audio_with_and_without_auto_hide(self):
+        w = self.window
+        w.set_chatgpt_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
+        outside = w._pointer_hover_bounds().topLeft() - QPoint(100, 100)
+        with patch("live_gpt.app.QCursor.pos", return_value=outside):
+            for auto_hide in (False, True):
+                with self.subTest(auto_hide=auto_hide):
+                    w.auto_hide_button.setChecked(auto_hide)
+                    w.begin_response_display("Question")
+                    w.set_response_update("Responding…", "The local reply")
+                    controller = TrayController.__new__(TrayController)
+                    controller.window = w
+                    controller._local_speech_thread = None
+                    controller._local_tts_configuration = Mock(return_value=(Mock(), "model", "speaker", "auto"))
+                    with patch.object(_QueuedLocalSpeechThread, "start"):
+                        worker = controller._ensure_local_speech_worker()
+                    w.set_response_finished(True, "Reply complete · Local voice queued")
+                    QApplication.processEvents()
+                    w._track_pointer(outside)
+                    self.assertTrue(w._subtitle_playback_pending)
+                    self.assertFalse(w._subtitle_reading_started)
+                    self.assertTrue(w._content_visible)
+                    self.assertEqual(w.subtitle_panel.graphicsEffect().opacity(), 1)
+                    self.assertEqual(w.subtitle_line_one.text(), "The local reply")
+                    self.assertEqual(w.pet.state, "running")
+                    self.assertFalse(w._auto_hide_timer.isActive())
+                    w._hide_for_auto_hide()
+                    self.assertTrue(w.isVisible())
+
+                    worker.started.emit("Playing with streaming GPT-SoVITS…")
+                    self.assertFalse(w._subtitle_playback_pending)
+                    self.assertTrue(w._subtitle_reading_active)
+                    self.assertTrue(w._content_visible)
+                    worker.completed.emit(True, "Playback complete")
+                    self.assertFalse(w._subtitle_playback_pending)
+                    self.assertTrue(w._playback_input_timer.isActive())
+                    controller._local_speech_finished()
+
+    def test_pending_local_playback_clears_on_failure_or_dismissal(self):
+        w = self.window
+        w.begin_response_display("Question")
+        w.prepare_reading()
+        w.finish_reading(False, "Model failed")
+        self.assertFalse(w._subtitle_playback_pending)
+        self.assertTrue(w._pet_error)
+        self.assertEqual(w.subtitle_labels[w._subtitle_row_count - 1].text(), "Model failed")
+        w.begin_response_display("Next question")
+        w.prepare_reading()
+        w.dismiss_subtitle_mode()
+        self.assertFalse(w._subtitle_playback_pending)
+        w.begin_reading("Late playback")
+        self.assertFalse(w._subtitle_mode_active)
+        self.assertTrue(w.subtitle_panel.isHidden())
+
+    def test_early_synthesis_failure_survives_browser_completion(self):
+        w = self.window
+        w.begin_response_display("Question")
+        w.prepare_reading()
+        controller = TrayController.__new__(TrayController)
+        controller.window = w
+        controller._local_speech_thread = None
+        controller._on_local_speech_completed(False, "Model failed")
+        controller._on_response_update("Responding…", "The reply")
+        controller._update_local_voice("The reply.", True)
+        controller._on_response_finished(True, "Reply complete · Local voice queued")
+        self.assertEqual(w.subtitle_labels[w._subtitle_row_count - 1].text(), "Model failed")
+        self.assertFalse(w._subtitle_playback_pending)
+        self.assertTrue(w._pet_error)
+        self.assertIsNone(controller._ensure_local_speech_worker())
+
+        controller.browser_monitor = Mock()
+        controller.selected_chatgpt_tab_id = "tab"
+        controller._handle_send_requested("Next question", None)
+        self.assertIsNone(controller._local_voice_playback_error)
 
     @patch("live_gpt.pet.QApplication.screenAt")
     def test_overlay_and_pet_drag_and_restore_current_activity(self, screen_at):

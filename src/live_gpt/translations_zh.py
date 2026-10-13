@@ -1,6 +1,12 @@
 """Simplified Chinese interface catalog (English source → translation)."""
 
 TRANSLATIONS = {
+    "NVIDIA GPU": "NVIDIA 显卡",
+    "NVIDIA GPU 0 (first GPU)": "NVIDIA 显卡 0（第一块显卡）",
+    "NVIDIA GPU {index} (unavailable)": "NVIDIA 显卡 {index}（不可用）",
+    "NVIDIA GPUs only. The first GPU is selected by default. CPU fallback is disabled.": "仅支持 NVIDIA 显卡，默认选择第一块显卡。禁止回退到 CPU。",
+    "Subtitles": "字幕",
+    "Subtitle rows": "字幕行数",
     "Show Live GPT": "显示 Live GPT",
     "Screenshots": "截图",
     "Capture mouse cursor in window screenshots": "窗口截图包含鼠标指针",

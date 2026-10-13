@@ -8,6 +8,32 @@ from live_gpt.localization import resolve_language
 
 
 class ConfigTests(unittest.TestCase):
+    def test_sovits_gpu_index_defaults_to_zero_and_rejects_cpu_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            config = Config(path)
+            self.assertEqual(config["sovits_gpu_index"], 0)
+            config["sovits_gpu_index"] = 1
+            self.assertEqual(Config(path)["sovits_gpu_index"], 1)
+            for invalid in (-1, "cpu", True, 0.5):
+                config["sovits_gpu_index"] = invalid
+                self.assertEqual(config["sovits_gpu_index"], 1)
+    def test_subtitle_rows_default_range_and_persistence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text('{"version": 1}', encoding="utf-8")
+            config = Config(path)
+            self.assertEqual(config["subtitle_rows"], 4)
+            for rows in (2, 10):
+                config["subtitle_rows"] = rows
+                self.assertEqual(Config(path)["subtitle_rows"], rows)
+            for invalid in (1, 11, True, 4.0, "4"):
+                with self.subTest(invalid=invalid):
+                    config["subtitle_rows"] = invalid
+                    self.assertEqual(config["subtitle_rows"], 10)
+                    path.write_text(json.dumps({"subtitle_rows": invalid}), encoding="utf-8")
+                    self.assertEqual(Config(path)["subtitle_rows"], 4)
+
     def test_existing_config_defaults_cursor_capture_on(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
