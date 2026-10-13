@@ -1,0 +1,25 @@
+<!-- Minimal reproduction of the supplied virtualized search-turn markup. -->
+<div data-request-input-activity-root="true">
+  <div data-turn-key="previous">
+    <div data-talvt-turn-state="complete">
+      <div data-chatgpt-search-unit-key="fallback-turn-18:0:user">Previous prompt</div>
+      <div data-chatgpt-search-unit-key="fallback-turn-18:2:assistant">
+        <div data-markdown-text-style="assistant-message"><p>Previous reply should never be spoken.</p></div>
+        <button aria-label="Copy response">Copy</button>
+      </div>
+    </div>
+  </div>
+  <div data-turn-key="current">
+    <div data-talvt-turn-state="in_progress">
+      <div data-chatgpt-search-unit-key="fallback-turn-19:0:user">New request</div>
+      <span class="cadencedShimmer-uMTG1d cadencedShimmerActive-DpK60y">Inspecting Screenshot Location Details<span aria-hidden="true">Inspecting Screenshot Location Details</span></span>
+      <div class="group/agent-activity" data-spacing="grouped">
+        <div class="group/activity-header">
+          <span><div data-markdown-text-style="assistant-message"><p>Searched 12 websites</p></div></span>
+        </div>
+        <button>Skip</button>
+      </div>
+    </div>
+  </div>
+  <form data-thread-find-composer="true"><button aria-label="Stop">Stop</button></form>
+</div>

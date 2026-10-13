@@ -737,6 +737,68 @@ class BrowserLocalizationTests(unittest.TestCase):
         self.assertFalse(snapshot.is_generating)
         self.assertEqual(snapshot.status, "Waiting for ChatGPT…")
 
+    def test_search_turn_never_reads_previous_reply_or_activity_markdown(self):
+        from unittest.mock import patch
+        from live_gpt.browser import _ActiveResponse, _MonitorState
+
+        fixture = (Path(__file__).parent / "fixtures" / "chatgpt_searching_turn.html").read_text(encoding="utf-8")
+        monitor = BrowserMonitor()
+        monitor.set_use_browser_voice(False)
+        speech, finished = [], []
+        monitor.local_voice_updated.connect(lambda *args: speech.append(args))
+        monitor.response_finished.connect(lambda *args: finished.append(args))
+        for marker_before in (None, "previous", "unmounted-before-send"):
+            with self.subTest(marker_before=marker_before):
+                self.page.set_content(fixture)
+                speech.clear()
+                state = _MonitorState(active_response=_ActiveResponse(
+                    page=self.page, turn_marker_before=marker_before, started_at=90,
+                ))
+                # With only activity markdown, extraction must stay empty.
+                snapshot = monitor._response_snapshot(self.page, marker_before)
+                self.assertEqual(snapshot.text, "")
+                self.assertTrue(snapshot.is_generating)
+                with patch("live_gpt.browser.time.monotonic", return_value=100) as clock:
+                    monitor._poll_active_response(state)
+                    # During rerender the entire activity block can disappear,
+                    # leaving the old reply as the last assistant selector match.
+                    self.page.locator('[class~="group/agent-activity"]').evaluate("e => e.remove()")
+                    snapshot = monitor._response_snapshot(self.page, marker_before)
+                    self.assertFalse(snapshot.has_new_turn)
+                    self.assertEqual(snapshot.text, "")
+                    monitor._poll_active_response(state)
+                    self.assertEqual(speech, [])
+                    self.assertEqual(finished, [])
+                    self.assertIsNotNone(state.active_response)
+
+                    self.page.locator('[data-turn-key="current"]').evaluate("""e => e.insertAdjacentHTML('beforeend',
+                        '<div data-chatgpt-search-unit-key="fallback-turn-19:2:assistant">'
+                        + '<div data-markdown-text-style="assistant-message"><p>The actual new reply.</p></div>'
+                        + '<button aria-label="Copy response">Copy</button></div>')""")
+                    monitor._poll_active_response(state)
+                    self.assertEqual(speech, [("The actual new reply.", False)])
+                    self.page.locator('[class*="cadencedShimmer-"], button[aria-label="Stop"]').evaluate_all(
+                        "elements => elements.forEach(e => e.remove())")
+                    clock.return_value = 103
+                    monitor._poll_active_response(state)
+                    clock.return_value = 106
+                    monitor._poll_active_response(state)
+                self.assertEqual(speech, [("The actual new reply.", False), ("The actual new reply.", True)])
+                self.assertIsNone(state.active_response)
+                self.assertEqual(finished.pop(), (True, "Reply complete · Local voice queued"))
+
+    def test_activity_after_reply_does_not_hide_actual_text(self):
+        self.page.set_content('''<div data-turn-key="new">
+          <div data-chatgpt-search-unit-key="new:assistant">
+            <div class="markdown">The real answer.</div>
+          </div>
+          <div class="group/activity-header">
+            <div data-markdown-text-style="assistant-message">Searched 12 websites</div>
+          </div>
+        </div>''')
+        snapshot = BrowserMonitor._response_snapshot(self.page, "old")
+        self.assertEqual(snapshot.text, "The real answer.")
+
     def test_search_activity_is_not_extracted_as_reply_text(self):
         for reply in ('', '<div class="markdown">Actual reply</div>'):
             with self.subTest(reply=reply):

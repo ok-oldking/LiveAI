@@ -1994,7 +1994,17 @@ class BrowserMonitor(QThread):
             or turn.get_attribute("data-testid", timeout=1_000)
             or turn.get_attribute("data-turn-key", timeout=1_000)
         )
-        if turn_marker == turn_marker_before:
+        is_latest_turn = turn.evaluate("""element => {
+            const turns = element.ownerDocument.querySelectorAll(
+                '[data-turn-key], [data-testid^="conversation-turn-"]'
+            );
+            const latest = turns[turns.length - 1];
+            return !latest || latest === element || latest.contains(element);
+        }""")
+        # While the new turn only contains a user message and search activity,
+        # the last *assistant* match can still be an older, remounted reply.
+        # Its marker may differ from the pre-send marker after virtualization.
+        if turn_marker == turn_marker_before or not is_latest_turn:
             return _ResponseSnapshot(
                 has_new_turn=False,
                 is_generating=is_generating,
@@ -2004,9 +2014,13 @@ class BrowserMonitor(QThread):
             )
 
         markdown = turn.locator(
-            '.markdown, [data-message-author-role="assistant"] .prose, '
-            '[data-markdown-text-style="assistant-message"], '
-            '[data-markdown-copy="contents"]:has([data-dil-message-id])'
+            ", ".join(selector + ':not([class~="group/activity-header"] *)'
+                      + ':not([class~="group/agent-activity"] *)'
+                      for selector in (
+                '.markdown', '[data-message-author-role="assistant"] .prose',
+                '[data-markdown-text-style="assistant-message"]',
+                '[data-markdown-copy="contents"]:has([data-dil-message-id])',
+            ))
         ).last
         has_markdown = int(markdown.count()) > 0
         text, reply_html = cls._response_content(markdown if has_markdown else turn)

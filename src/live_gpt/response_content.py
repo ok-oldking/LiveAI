@@ -246,6 +246,8 @@ element => {
         '[data-markdown-copy="exclude"]',
         '[data-d-component="shimmer-text"]',
         '[class*="cadencedShimmer-"]',
+        '[class~="group/activity-header"]', '[class~="group/agent-activity"]',
+        '[data-user-message-bubble]', '[data-chatgpt-search-unit-key$=":user"]',
         '[aria-hidden="true"]', '[hidden]',
         '[data-testid="webpage-citation-pill"]',
         '[data-testid="webpage-citation-card"]',
