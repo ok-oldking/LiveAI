@@ -13,7 +13,7 @@ from websockets.asyncio.server import serve
 from websockets.sync.client import connect
 
 from live_gpt.cdp_bridge import ChatGPTCDPBridge, _TargetFilter
-from live_gpt.browser import BrowserMonitor
+from live_gpt.browser import BrowserMonitor, _MonitorState
 from unittest.mock import patch
 
 
@@ -170,6 +170,47 @@ class BridgeLifecycleTests(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("LIVE_GPT_TEST_BROWSER"), "Browser channel not selected")
 class BridgeBrowserTests(unittest.TestCase):
+    def test_selected_background_focus_works_through_filtered_connection(self):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        with sync_playwright() as playwright:
+            native = playwright.chromium.launch(
+                channel=os.environ["LIVE_GPT_TEST_BROWSER"], headless=True,
+                args=[f"--remote-debugging-port={port}"],
+            )
+            bridge = ChatGPTCDPBridge(f"http://127.0.0.1:{port}")
+            try:
+                context = native.new_context()
+                context.route("https://chatgpt.com/**", lambda route: route.fulfill(body="<p>Focus test</p>"))
+                selected = context.new_page()
+                selected.goto("https://chatgpt.com/c/focus-test")
+                session = context.new_cdp_session(selected)
+                session.send("Emulation.setFocusEmulationEnabled", {"enabled": False})
+                session.detach()
+                other = context.new_page()
+                other.set_content("<p>Other active tab</p>")
+                other.bring_to_front()
+                self.assertFalse(selected.evaluate("document.hasFocus()"))
+
+                attached = playwright.chromium.connect_over_cdp(bridge.start(), no_defaults=True, timeout=5_000)
+                pages = [page for ctx in attached.contexts for page in ctx.pages]
+                self.assertEqual([page.url for page in pages], [selected.url])
+                monitor = BrowserMonitor()
+                state = _MonitorState(browser=attached, bridge=bridge)
+                monitor.request_focus_tab(str(id(pages[0])))
+                monitor._sync_focus_emulation(state, Exception)
+                self.assertIsNotNone(state.focus_session)
+                self.assertTrue(selected.evaluate("document.hasFocus()"))
+                self.assertEqual(pages[0].inner_text("p"), "Focus test")
+                monitor._handle_disconnect(state)
+                self.assertFalse(selected.evaluate("document.hasFocus()"))
+                self.assertEqual(len(context.pages), 2)
+                attached.close()
+            finally:
+                bridge.close()
+                native.close()
+
     def test_persistent_profile_with_changing_titles_has_one_session_per_page(self):
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))

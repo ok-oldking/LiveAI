@@ -1457,6 +1457,18 @@ class SettingsDialogTests(unittest.TestCase):
 
 
 class TrayControllerBrowserTests(unittest.TestCase):
+    def test_tab_selection_updates_background_focus_and_disconnect_clears_it(self):
+        controller = TrayController.__new__(TrayController)
+        controller.browser_monitor = Mock()
+        controller._select_chatgpt_tab("chosen-tab")
+        self.assertEqual(controller.selected_chatgpt_tab_id, "chosen-tab")
+        controller.browser_monitor.request_focus_tab.assert_called_once_with("chosen-tab")
+        controller._set_chatgpt_connection(True)
+        self.assertEqual(controller.browser_monitor.request_focus_tab.call_count, 1)
+        controller._set_chatgpt_connection(False)
+        self.assertIsNone(controller.selected_chatgpt_tab_id)
+        controller.browser_monitor.request_focus_tab.assert_called_with(None)
+
     def test_exit_keeps_ui_responsive_until_all_workers_stop(self) -> None:
         controller = TrayController.__new__(TrayController)
         controller.application = Mock()
@@ -2529,11 +2541,13 @@ class TrayControllerBrowserTests(unittest.TestCase):
         )
         saved_window = CaptureSource(
             "window:1", "Saved window", "window", 0, 0, 1200, 900, hwnd=1,
+            window_identity='window:v2:["game.exe", "GameWindow", "Saved window"]',
         )
         for saved_key, expected in (
             ("", desktop),
             ("window:missing", desktop),
-            (saved_window.key, saved_window),
+            (saved_window.key, desktop),  # Legacy handle may now belong to any window.
+            (saved_window.preference_key, saved_window),
         ):
             with self.subTest(saved_key=saved_key):
                 window = OverlayWindow()
@@ -2555,9 +2569,10 @@ class TrayControllerBrowserTests(unittest.TestCase):
         )
         selected_window = CaptureSource(
             "window:1", "Selected window", "window", 0, 0, 1200, 900, hwnd=1,
+            window_identity='window:v2:["game.exe", "GameWindow", "Selected window"]',
         )
         try:
-            window.set_preferred_capture_source(selected_window.key)
+            window.set_preferred_capture_source(selected_window.preference_key)
             window.set_capture_sources([desktop, selected_window])
             self.assertEqual(window.capture_source_combo.currentData(), selected_window)
 
@@ -2565,6 +2580,70 @@ class TrayControllerBrowserTests(unittest.TestCase):
 
             self.assertEqual(window.capture_source_combo.currentData(), desktop)
             self.assertTrue(window.transcript_area._screenshot_selected)
+            window.set_capture_sources([desktop, selected_window])
+            self.assertEqual(window.capture_source_combo.currentData(), selected_window)
+        finally:
+            window.close()
+
+    def test_capture_preference_survives_new_handle_but_rejects_unrelated_window(self):
+        from dataclasses import replace
+        window = OverlayWindow()
+        desktop = CaptureSource("display:1", "Desktop", "display", 0, 0, 1920, 1080)
+        original = CaptureSource("window:10:100", "Game", "window", 0, 0, 1200, 900, 10, 100,
+                                 'window:v2:["game.exe", "GameWindow", "Game"]')
+        unrelated = CaptureSource("window:10:200", "Unrelated", "window", 0, 0, 1300, 1000, 10, 200,
+                                  'window:v2:["other.exe", "OtherWindow", "Unrelated"]')
+        reopened = replace(original, key="window:20:300", hwnd=20, process_id=300)
+        preferences = []
+        window.capture_source_selected.connect(preferences.append)
+        try:
+            window.set_preferred_capture_source(original.preference_key)
+            window.set_capture_sources([desktop, unrelated])
+            self.assertEqual(window.capture_source_combo.currentData(), desktop)
+            window.set_capture_sources([desktop, unrelated, reopened])
+            self.assertEqual(window.capture_source_combo.currentData(), reopened)
+            window.set_capture_sources([desktop, replace(unrelated, width=1600), reopened])
+            self.assertEqual(window.capture_source_combo.currentData(), reopened)
+            self.assertEqual(preferences, [])
+            window.capture_source_combo.setCurrentIndex(1)
+            self.assertEqual(preferences, [unrelated.preference_key])
+        finally:
+            window.close()
+
+    def test_capture_selector_does_not_restore_ambiguous_or_default_window(self):
+        from dataclasses import replace
+        desktop = CaptureSource("display:1", "Desktop", "display", 0, 0, 1920, 1080)
+        first = CaptureSource("window:1:10", "Window", "window", 0, 0, 1200, 900, 1, 10,
+                              'window:v2:["app.exe", "WindowClass", "Window"]')
+        duplicate = replace(first, key="window:2:10", hwnd=2)
+        window = OverlayWindow()
+        try:
+            window.set_preferred_capture_source(first.preference_key)
+            window.set_capture_sources([desktop, first, duplicate])
+            self.assertEqual(window.capture_source_combo.currentData(), desktop)
+            window.capture_source_combo.setCurrentIndex(2)
+            window.set_capture_sources([desktop, duplicate, first])
+            self.assertEqual(window.capture_source_combo.currentData(), duplicate)
+            window.set_preferred_capture_source("window:old-handle")
+            window.set_capture_sources([first, duplicate])
+            self.assertIsNone(window.capture_source_combo.currentData())
+            self.assertFalse(window.transcript_area._screenshot_selected)
+        finally:
+            window.close()
+
+    def test_capture_fallback_does_not_override_explicit_desktop_selection(self):
+        desktop = CaptureSource("display:1", "Desktop", "display", 0, 0, 1920, 1080)
+        selected = CaptureSource("window:1:10", "Game", "window", 0, 0, 1200, 900, 1, 10,
+                                 'window:v2:["game.exe", "GameWindow", "Game"]')
+        window = OverlayWindow()
+        try:
+            window.set_preferred_capture_source(selected.preference_key)
+            window.set_capture_sources([desktop, selected])
+            window.set_capture_sources([desktop])
+            # The desktop is already the fallback; explicitly choose it anyway.
+            window.capture_source_combo.activated.emit(0)
+            window.set_capture_sources([desktop, selected])
+            self.assertEqual(window.capture_source_combo.currentData(), desktop)
         finally:
             window.close()
 

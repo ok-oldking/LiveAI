@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import sys
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -36,6 +37,13 @@ class CaptureSource:
     width: int
     height: int
     hwnd: int = 0
+    process_id: int = 0
+    window_identity: str = ""
+
+    @property
+    def preference_key(self) -> str:
+        # HWNDs belong to a live window, not a saved application identity.
+        return self.window_identity if self.kind == "window" else self.key
 
 
 class _BitmapInfoHeader(ctypes.Structure):
@@ -93,6 +101,7 @@ if sys.platform == "win32":
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
     dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
     try:
         user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
@@ -128,6 +137,16 @@ if sys.platform == "win32":
         ctypes.c_int,
     ]
     user32.GetClassNameW.restype = ctypes.c_int
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
     user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(_MonitorInfo)]
     user32.GetMonitorInfoW.restype = wintypes.BOOL
     user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
@@ -241,6 +260,8 @@ def capture_webp(source: CaptureSource, *, include_cursor: bool = True) -> bytes
             render_full=False,
         )
     elif source.kind == "window":
+        if source.process_id and _window_process_id(source.hwnd) != source.process_id:
+            raise RuntimeError("The selected window is no longer available")
         rect = wintypes.RECT()
         if not user32.GetWindowRect(source.hwnd, ctypes.byref(rect)):
             raise RuntimeError("The selected window is no longer available")
@@ -314,8 +335,35 @@ def _enumerate_displays() -> list[tuple[int, int, int, int, int]]:
     return displays
 
 
+def _window_process_id(hwnd: int) -> int:
+    process_id = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+    return process_id.value
+
+
+def _process_executable(process_id: int) -> str:
+    process = kernel32.OpenProcess(0x1000, False, process_id)  # QUERY_LIMITED_INFORMATION
+    if not process:
+        return ""
+    try:
+        buffer = ctypes.create_unicode_buffer(32768)
+        size = wintypes.DWORD(len(buffer))
+        if not kernel32.QueryFullProcessImageNameW(process, 0, buffer, ctypes.byref(size)):
+            return ""
+        return buffer.value.casefold()
+    finally:
+        kernel32.CloseHandle(process)
+
+
+def _window_identity(executable: str, class_name: str, title: str) -> str:
+    if not executable:
+        return ""
+    return "window:v2:" + json.dumps([executable.casefold(), class_name, title], ensure_ascii=False)
+
+
 def _enumerate_visible_windows(excluded: set[int]) -> list[CaptureSource]:
     windows: list[CaptureSource] = []
+    process_paths: dict[int, str] = {}
     callback_errors: list[Exception] = []
     callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
@@ -371,9 +419,14 @@ def _enumerate_visible_windows(excluded: set[int]) -> list[CaptureSource]:
             ):
                 return True
 
+            process_id = _window_process_id(handle)
+            if not process_id:
+                return True  # The window disappeared during enumeration.
+            if process_id not in process_paths:
+                process_paths[process_id] = _process_executable(process_id)
             windows.append(
                 CaptureSource(
-                    key=f"window:{handle}",
+                    key=f"window:{handle}:{process_id}",
                     label=f"{title} ({width}×{height})",
                     kind="window",
                     left=rect.left,
@@ -381,6 +434,8 @@ def _enumerate_visible_windows(excluded: set[int]) -> list[CaptureSource]:
                     width=width,
                     height=height,
                     hwnd=handle,
+                    process_id=process_id,
+                    window_identity=_window_identity(process_paths[process_id], class_buffer.value, title),
                 )
             )
             return True

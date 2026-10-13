@@ -17,6 +17,42 @@ from live_gpt import screen_capture
 
 
 class CaptureSourceTests(unittest.TestCase):
+    def test_window_preference_uses_identity_not_recycled_handle_or_size(self):
+        from dataclasses import replace
+        identity = screen_capture._window_identity(r"C:\Games\Game.exe", "GameWindow", "游戏")
+        source = CaptureSource("window:123:10", "游戏 (1200×900)", "window", 0, 0, 1200, 900,
+                               123, 10, identity)
+        reopened = replace(source, key="window:456:20", hwnd=456, process_id=20, width=1600)
+        self.assertEqual(source.preference_key, reopened.preference_key)
+        self.assertNotEqual(source.preference_key,
+                            screen_capture._window_identity(r"C:\Other\App.exe", "GameWindow", "游戏"))
+        self.assertEqual(CaptureSource("window:123", "Legacy", "window", 0, 0, 1, 1).preference_key, "")
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows capture APIs")
+    def test_capture_rejects_window_handle_reassigned_to_another_process(self):
+        source = CaptureSource("window:1:10", "Window", "window", 0, 0, 20, 20, 1, 10)
+        with patch.object(screen_capture, "_window_process_id", return_value=20), \
+                patch.object(screen_capture, "_capture_bitmap") as capture:
+            with self.assertRaisesRegex(RuntimeError, "no longer available"):
+                screen_capture.capture_webp(source)
+            capture.assert_not_called()
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows capture APIs")
+    def test_process_executable_query_closes_handle_on_success_and_failure(self):
+        kernel = Mock()
+        kernel.OpenProcess.return_value = 123
+        def executable(handle, flags, buffer, size):
+            buffer.value = r"C:\Games\Game.exe"
+            return True
+        kernel.QueryFullProcessImageNameW.side_effect = executable
+        with patch.object(screen_capture, "kernel32", kernel):
+            self.assertEqual(screen_capture._process_executable(10), r"c:\games\game.exe")
+            kernel.CloseHandle.assert_called_once_with(123)
+            kernel.QueryFullProcessImageNameW.side_effect = None
+            kernel.QueryFullProcessImageNameW.return_value = False
+            self.assertEqual(screen_capture._process_executable(10), "")
+            self.assertEqual(kernel.CloseHandle.call_count, 2)
+
     @unittest.skipUnless(sys.platform == "win32", "Windows capture APIs")
     def test_cursor_uses_current_window_origin_and_can_be_disabled(self) -> None:
         source = CaptureSource("window:1", "Window", "window", 0, 0, 20, 20, 1)

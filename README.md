@@ -71,7 +71,11 @@ previous app; a global-hotkey send leaves focus unchanged.
 The screenshot selector lists one choice for each desktop display and then
 visible windows ordered from largest to smallest. It restores the last selected
 source when available and defaults to **Screenshot desktop** when no source was
-saved or the saved source is unavailable. A window is listed only when its area
+saved or the saved source is unavailable. Window preferences match the executable,
+window class, and title instead of a reusable Windows handle. Legacy handle-only
+preferences need one manual reselection. A missing or ambiguous window never
+selects another window automatically; a temporarily missing selection is restored
+when it returns unless you choose a different source. A window is listed only when its area
 is greater than one eighth of the display containing it. When sending with a
 screenshot, Live GPT removes existing ChatGPT image attachments, captures the
 chosen source, scales its longest edge down to 1920 pixels when necessary, and
@@ -264,8 +268,12 @@ requests from creating a stack of dialogs. After choosing **Deny**, click
 If opening or enabling the debugging settings fails, Live GPT stops automatic
 setup attempts. Click **Enable Debugging** to retry after correcting the issue;
 it checks that the browser address bar is accessible before opening a new tab.
-Attached ChatGPT pages retain the browser's native color-scheme and focus
-settings through Playwright's `no_defaults` connection option (Playwright 1.62+).
+Attached ChatGPT pages retain the browser's native color scheme through
+Playwright's `no_defaults` connection option (Playwright 1.62+). Live GPT uses
+focus emulation to keep the selected ChatGPT tab active while you use another
+window, without bringing the browser forward. Switching tabs, disconnecting,
+or exiting restores normal tab focus. This may reduce background completion
+notifications; phone notification delivery also depends on ChatGPT's settings.
 Live GPT does not launch the browser with debugging flags or create
 a separate profile. The optional `LIVE_GPT_CDP_ENDPOINT` environment variable
 can point the app at a specific CDP HTTP or WebSocket endpoint.

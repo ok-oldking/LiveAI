@@ -127,6 +127,93 @@ class BrowserDiscoveryTests(unittest.TestCase):
 
 
 class BrowserMonitorTests(unittest.TestCase):
+    def test_selected_tab_focus_switches_and_disconnect_restores_it(self):
+        monitor = BrowserMonitor()
+        first = Mock(url="https://chatgpt.com/c/first")
+        second = Mock(url="https://chatgpt.com/c/second")
+        unrelated = Mock(url="https://example.com/")
+        for page in (first, second, unrelated):
+            page.is_closed.return_value = False
+        first_session, second_session = Mock(), Mock()
+        context = Mock(pages=[first, second, unrelated])
+        context.new_cdp_session.side_effect = lambda page: {
+            first: first_session, second: second_session,
+        }[page]
+        first.context = second.context = unrelated.context = context
+        state = _MonitorState(browser=Mock(contexts=[context]))
+
+        monitor.request_focus_tab(str(id(first)))
+        self.assertTrue(monitor._wake_event.is_set())
+        monitor._sync_focus_emulation(state, FakePlaywrightError)
+        first_session.send.assert_called_once_with("Emulation.setFocusEmulationEnabled", {"enabled": True})
+        monitor._sync_focus_emulation(state, FakePlaywrightError)
+        self.assertEqual(first_session.send.call_count, 1)
+
+        monitor.request_focus_tab(str(id(second)))
+        monitor._sync_focus_emulation(state, FakePlaywrightError)
+        first_session.send.assert_called_with("Emulation.setFocusEmulationEnabled", {"enabled": False})
+        first_session.detach.assert_called_once()
+        second_session.send.assert_called_once_with("Emulation.setFocusEmulationEnabled", {"enabled": True})
+        monitor._handle_disconnect(state)
+        second_session.send.assert_called_with("Emulation.setFocusEmulationEnabled", {"enabled": False})
+        second_session.detach.assert_called_once()
+        self.assertIsNone(state.focus_session)
+        self.assertIsNone(state.focus_page)
+        for page in (first, second, unrelated):
+            page.bring_to_front.assert_not_called()
+
+    def test_focus_emulation_ignores_non_chatgpt_and_closed_selected_pages(self):
+        monitor = BrowserMonitor()
+        page = Mock(url="https://chatgpt.com/c/selected")
+        page.is_closed.return_value = False
+        context = Mock(pages=[page])
+        page.context = context
+        state = _MonitorState(browser=Mock(contexts=[context]))
+        monitor.request_focus_tab(str(id(page)))
+        monitor._sync_focus_emulation(state, FakePlaywrightError)
+        session = context.new_cdp_session.return_value
+
+        page.url = "https://example.com/"
+        monitor._sync_focus_emulation(state, FakePlaywrightError)
+        session.send.assert_called_with("Emulation.setFocusEmulationEnabled", {"enabled": False})
+        self.assertIsNone(state.focus_session)
+        context.new_cdp_session.assert_called_once()
+        page.url = "https://chatgpt.com/c/selected"
+        monitor._sync_focus_emulation(state, FakePlaywrightError)
+        page.is_closed.return_value = True
+        monitor._sync_focus_emulation(state, FakePlaywrightError)
+        self.assertIsNone(state.focus_session)
+
+    def test_unsupported_focus_emulation_does_not_break_connection_or_repeat(self):
+        monitor = BrowserMonitor()
+        page = Mock(url="https://chatgpt.com/")
+        page.is_closed.return_value = False
+        context = Mock(pages=[page])
+        page.context = context
+        session = context.new_cdp_session.return_value
+        session.send.side_effect = FakePlaywrightError("Method not found")
+        browser = Mock(contexts=[context])
+        state = _MonitorState(browser=browser)
+        monitor.request_focus_tab(str(id(page)))
+        monitor._sync_focus_emulation(state, FakePlaywrightError)
+        monitor._sync_focus_emulation(state, FakePlaywrightError)
+        self.assertIs(state.browser, browser)
+        self.assertIsNone(state.focus_session)
+        context.new_cdp_session.assert_called_once()
+        session.detach.assert_called_once()
+
+    def test_focus_emulation_cleans_up_on_worker_exception(self):
+        monitor = BrowserMonitor()
+        session = Mock()
+        state = _MonitorState(focus_page=Mock(), focus_session=session)
+        session.send.side_effect = FakePlaywrightError("Page closed")
+        with self.assertRaisesRegex(RuntimeError, "Worker failed"):
+            with monitor._focus_emulation_lifetime(state):
+                raise RuntimeError("Worker failed")
+        session.detach.assert_called_once()
+        self.assertIsNone(state.focus_session)
+        self.assertIsNone(state.focus_page)
+
     def setUp(self):
         bridge_patch = patch("live_gpt.browser.ChatGPTCDPBridge")
         factory = bridge_patch.start()

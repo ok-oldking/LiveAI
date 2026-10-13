@@ -31,6 +31,57 @@ class BrowserLocalizationTests(unittest.TestCase):
         self.page = self.browser.new_page()
         self.addCleanup(self.page.close)
 
+    def test_focus_emulation_keeps_selected_background_tab_active_and_restores_it(self):
+        from live_gpt.browser import _MonitorState
+        from playwright.sync_api import Error
+
+        context = self.browser.new_context()
+        self.addCleanup(context.close)
+        context.route('https://chatgpt.com/**', lambda route: route.fulfill(
+            body='<p>Focus test</p>', content_type='text/html',
+        ))
+        selected, other = context.new_page(), context.new_page()
+        selected.goto('https://chatgpt.com/c/focus-test')
+        other.goto('https://chatgpt.com/c/other-tab')
+        for page in (selected, other):
+            session = context.new_cdp_session(page)
+            session.send('Emulation.setFocusEmulationEnabled', {'enabled': False})
+            session.detach()
+        other.bring_to_front()
+        self.assertFalse(selected.evaluate('document.hasFocus()'))
+
+        monitor = BrowserMonitor()
+        state = _MonitorState(browser=self.browser)
+        monitor.request_focus_tab(str(id(selected)))
+        with monitor._focus_emulation_lifetime(state):
+            monitor._sync_focus_emulation(state, Error)
+            self.assertTrue(selected.evaluate('document.hasFocus()'))
+            selected.reload()
+            self.assertTrue(selected.evaluate('document.hasFocus()'))
+            # Changing the selected tab clears the old override while the
+            # browser's real active tab remains the other page.
+            monitor.request_focus_tab(str(id(other)))
+            monitor._sync_focus_emulation(state, Error)
+            self.assertFalse(selected.evaluate('document.hasFocus()'))
+            monitor.request_focus_tab(str(id(selected)))
+            monitor._sync_focus_emulation(state, Error)
+            self.assertTrue(selected.evaluate('document.hasFocus()'))
+        self.assertFalse(selected.evaluate('document.hasFocus()'))
+        self.assertTrue(other.evaluate('document.hasFocus()'))
+
+    def test_detaching_focus_session_restores_native_focus(self):
+        context = self.browser.new_context()
+        self.addCleanup(context.close)
+        selected, other = context.new_page(), context.new_page()
+        session = context.new_cdp_session(selected)
+        session.send('Emulation.setFocusEmulationEnabled', {'enabled': False})
+        other.bring_to_front()
+        self.assertFalse(selected.evaluate('document.hasFocus()'))
+        session.send('Emulation.setFocusEmulationEnabled', {'enabled': True})
+        self.assertTrue(selected.evaluate('document.hasFocus()'))
+        session.detach()
+        self.assertFalse(selected.evaluate('document.hasFocus()'))
+
     def test_stop_interrupts_browser_call_and_preserves_attached_browser(self):
         import threading
 

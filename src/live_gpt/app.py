@@ -3183,6 +3183,7 @@ class OverlayWindow(QMainWindow):
         self._browser_connected = False
         self._debug_connected = False
         self._preferred_capture_source_key = ""
+        self._capture_source_runtime_key = ""
         self._preferred_chatgpt_url = ""
         self.setWindowTitle("Live GPT")
         self.setMinimumSize(760, 180)
@@ -3261,6 +3262,7 @@ class OverlayWindow(QMainWindow):
         self.capture_source_combo.currentIndexChanged.connect(
             self._capture_source_changed
         )
+        self.capture_source_combo.activated.connect(self._capture_source_activated)
         title_layout.addWidget(self.capture_source_combo, 1)
 
         self.remote_debugging_button = QPushButton(tr("Enable Debugging"))
@@ -3852,28 +3854,28 @@ class OverlayWindow(QMainWindow):
         self._update_expanded_subtitle()
 
     def set_capture_sources(self, sources: list[CaptureSource]) -> None:
-        selected = self.capture_source_combo.currentData()
-        selected_key = (
-            selected.key
-            if isinstance(selected, CaptureSource)
-            else self._preferred_capture_source_key
-        )
         self.capture_source_combo.blockSignals(True)
         self.capture_source_combo.clear()
         selected_index = next(
             (index for index, source in enumerate(sources) if source.kind == "display"),
-            0,
+            -1,
         )
         for source in sources:
             self.capture_source_combo.addItem(
                 translate_message(source.label) if source.kind == "display" else source.label, source
             )
-        if selected_key:
-            for index in range(self.capture_source_combo.count()):
-                source = self.capture_source_combo.itemData(index)
-                if isinstance(source, CaptureSource) and source.key == selected_key:
-                    selected_index = index
-                    break
+        runtime_matches = [index for index, source in enumerate(sources)
+                           if source.key == self._capture_source_runtime_key]
+        preference_matches = [index for index, source in enumerate(sources)
+                              if self._preferred_capture_source_key
+                              and source.preference_key == self._preferred_capture_source_key]
+        if runtime_matches:
+            selected_index = runtime_matches[0]
+        elif len(preference_matches) == 1:
+            # Restore only an unambiguous executable/class/title match. Old
+            # handle-only preferences must never select a recycled HWND.
+            selected_index = preference_matches[0]
+            self._capture_source_runtime_key = sources[selected_index].key
         self.capture_source_combo.setCurrentIndex(selected_index)
         self.capture_source_combo.blockSignals(False)
         self._apply_capture_source(
@@ -3883,6 +3885,7 @@ class OverlayWindow(QMainWindow):
 
     def set_preferred_capture_source(self, source_key: str) -> None:
         self._preferred_capture_source_key = source_key
+        self._capture_source_runtime_key = ""
 
     def set_preferred_chatgpt_window(self, url: str) -> None:
         self._preferred_chatgpt_url = url
@@ -4474,6 +4477,16 @@ class OverlayWindow(QMainWindow):
     def _capture_source_changed(self, index: int) -> None:
         self._apply_capture_source(index, save_preference=True)
 
+    def _capture_source_activated(self, index: int) -> None:
+        # Choosing the currently displayed fallback emits activated, but not
+        # currentIndexChanged. Treat it as an explicit new preference too.
+        source = self.capture_source_combo.itemData(index)
+        if isinstance(source, CaptureSource) and (
+            source.key != self._capture_source_runtime_key
+            or source.preference_key != self._preferred_capture_source_key
+        ):
+            self._apply_capture_source(index, save_preference=True)
+
     def _apply_capture_source(
         self,
         index: int,
@@ -4486,8 +4499,9 @@ class OverlayWindow(QMainWindow):
         )
         if save_preference:
             source_key = (
-                source.key if isinstance(source, CaptureSource) else ""
+                source.preference_key if isinstance(source, CaptureSource) else ""
             )
+            self._capture_source_runtime_key = source.key if isinstance(source, CaptureSource) else ""
             self._preferred_capture_source_key = source_key
             self.capture_source_selected.emit(source_key)
 
@@ -6271,12 +6285,14 @@ class TrayController:
 
     def _select_chatgpt_tab(self, tab_id: str) -> None:
         self.selected_chatgpt_tab_id = tab_id
+        self.browser_monitor.request_focus_tab(tab_id)
         logger.info(f"Selected ChatGPT tab id={tab_id}")
 
     def _set_chatgpt_connection(self, connected: bool) -> None:
         if connected:
             return
         self.selected_chatgpt_tab_id = None
+        self.browser_monitor.request_focus_tab(None)
 
     def _save_chatgpt_preference(self, url: str) -> None:
         self.config["chatgpt_window"] = url

@@ -230,6 +230,8 @@ class _MonitorState:
     browser: Any | None = None
     bridge: ChatGPTCDPBridge | None = None
     discovery_session: Any | None = None
+    focus_page: Any | None = None
+    focus_session: Any | None = None
     settings_opened: bool = False
     settings_attempted: bool = False
     retry_endpoint: str | None = None
@@ -348,9 +350,15 @@ class BrowserMonitor(QThread):
         self._dictation_start_cancelled: threading.Event | None = None
         self._last_status = ""
         self._use_browser_voice = True
+        self._selected_tab_id: str | None = None
 
     def set_use_browser_voice(self, enabled: bool) -> None:
         self._use_browser_voice = bool(enabled)
+
+    def request_focus_tab(self, tab_id: str | None) -> None:
+        """Keep the selected ChatGPT tab active without changing window focus."""
+        self._selected_tab_id = tab_id
+        self._wake_event.set()
 
     def request_stop(self) -> None:
         self._stop_requested = True
@@ -527,7 +535,7 @@ class BrowserMonitor(QThread):
         self, sync_playwright: Callable, PlaywrightError: type[Exception],
         state: _MonitorState,
     ) -> None:
-        with sync_playwright() as playwright:
+        with sync_playwright() as playwright, self._focus_emulation_lifetime(state):
             connection = playwright._impl_obj._connection
             # CDP approval waits need to be cancellable for retry and exit.
             # Playwright exposes no public cancellation
@@ -547,6 +555,7 @@ class BrowserMonitor(QThread):
                 if self._is_connected(state.browser):
                     with self._browser_operation(10):
                         self._refresh_tabs(state, PlaywrightError)
+                        self._sync_focus_emulation(state, PlaywrightError)
                 elif state.last_tabs:
                     state.last_tabs = []
                     self.tabs_changed.emit([])
@@ -804,7 +813,57 @@ class BrowserMonitor(QThread):
         tabs.sort(key=lambda tab: tab["title"].casefold())
         return tabs
 
+    @contextmanager
+    def _focus_emulation_lifetime(self, state: _MonitorState) -> Iterator[None]:
+        try:
+            yield
+        finally:
+            # Release our override before Playwright disconnects. If its driver
+            # was interrupted, Chromium also clears it when the CDP session ends.
+            with self._browser_operation(3):
+                self._clear_focus_emulation(state)
+
+    @staticmethod
+    def _clear_focus_emulation(state: _MonitorState) -> None:
+        session = state.focus_session
+        state.focus_session = None
+        state.focus_page = None
+        if session is None:
+            return
+        try:
+            session.send("Emulation.setFocusEmulationEnabled", {"enabled": False})
+        except Exception as error:
+            logger.debug(f"Focus emulation session already unavailable: {error}")
+        finally:
+            try:
+                session.detach()
+            except Exception:
+                pass  # Closed pages and disconnected drivers already detached.
+
+    def _sync_focus_emulation(self, state: _MonitorState, playwright_error: type[Exception]) -> None:
+        page = (
+            self._find_chatgpt_page(state.browser, self._selected_tab_id, playwright_error)
+            if state.browser is not None and self._selected_tab_id is not None else None
+        )
+        if page is state.focus_page:
+            return
+        self._clear_focus_emulation(state)
+        if page is None:
+            return
+        # Remember failures for this page too, so unsupported browsers do not
+        # get the same command every poll. Reconnect or reselection retries it.
+        state.focus_page = page
+        try:
+            state.focus_session = page.context.new_cdp_session(page)
+            state.focus_session.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
+            logger.info(f"Enabled background focus for ChatGPT tab id={id(page)}")
+        except Exception as error:
+            self._clear_focus_emulation(state)
+            state.focus_page = page
+            logger.warning(f"Could not enable background focus for ChatGPT: {error}")
+
     def _handle_disconnect(self, state: _MonitorState) -> None:
+        self._clear_focus_emulation(state)
         if state.bridge is not None:
             state.bridge.close()
             state.bridge = None
