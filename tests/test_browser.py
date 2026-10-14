@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from live_gpt.browser import (
     ASSISTANT_TURN_SELECTOR,
@@ -613,6 +613,86 @@ class BrowserMonitorTests(unittest.TestCase):
         page.title.assert_not_called()
         page.emulate_media.assert_not_called()
 
+    def test_empty_connection_opens_chatgpt_once_and_discovers_created_tab(self):
+        monitor = BrowserMonitor()
+        updates = []
+        monitor.tabs_changed.connect(updates.append)
+        context = Mock(pages=[])
+        browser = Mock(contexts=[context])
+        session = browser.new_browser_cdp_session.return_value
+        session.send.return_value = {"targetInfos": []}
+        state = _MonitorState(browser=browser)
+        monitor._refresh_tabs(state, FakePlaywrightError)
+        monitor._refresh_tabs(state, FakePlaywrightError)
+        self.assertEqual(session.send.call_args_list, [
+            call("Target.getTargets"),
+            call("Target.createTarget", {"url": "https://chatgpt.com/"}),
+            call("Target.getTargets"),
+        ])
+        page = Mock(url="https://chatgpt.com/")
+        page.is_closed.return_value = False
+        context.pages.append(page)
+        monitor._refresh_tabs(state, FakePlaywrightError)
+        self.assertEqual(updates[-1], [{"id": str(id(page)), "title": "ChatGPT", "url": page.url}])
+        context.pages.clear()
+        monitor._refresh_tabs(state, FakePlaywrightError)
+        self.assertEqual(updates[-1], [])
+        self.assertEqual(sum(c.args[0] == "Target.createTarget" for c in session.send.call_args_list), 1)
+
+    def test_existing_chatgpt_target_prevents_duplicate_before_page_attachment(self):
+        monitor = BrowserMonitor()
+        browser = Mock(contexts=[Mock(pages=[])])
+        session = browser.new_browser_cdp_session.return_value
+        session.send.return_value = {"targetInfos": [
+            {"type": "page", "url": "https://chatgpt.com/c/existing", "title": ""},
+        ]}
+        state = _MonitorState(browser=browser)
+        monitor._refresh_tabs(state, FakePlaywrightError)
+        session.send.assert_called_once_with("Target.getTargets")
+        self.assertTrue(state.initial_chatgpt_tab_checked)
+
+    def test_failed_chatgpt_creation_keeps_connection_and_does_not_repeat(self):
+        monitor = BrowserMonitor()
+        browser = Mock(contexts=[Mock(pages=[])])
+        session = browser.new_browser_cdp_session.return_value
+        session.send.side_effect = [
+            {"targetInfos": []}, FakePlaywrightError("Creation failed"), {"targetInfos": []},
+        ]
+        state = _MonitorState(browser=browser)
+        statuses = []
+        monitor.status_changed.connect(statuses.append)
+        monitor._refresh_tabs(state, FakePlaywrightError)
+        monitor._refresh_tabs(state, FakePlaywrightError)
+        self.assertIs(state.browser, browser)
+        self.assertEqual(statuses, ["Could not open ChatGPT tab: Creation failed"])
+        self.assertEqual(session.send.call_count, 3)
+
+    def test_stop_or_retry_does_not_open_chatgpt_tab(self):
+        for attribute in ("_stop_requested", "_retry_connection_requested"):
+            with self.subTest(attribute=attribute):
+                monitor = BrowserMonitor()
+                setattr(monitor, attribute, True)
+                browser = Mock(contexts=[])
+                session = browser.new_browser_cdp_session.return_value
+                session.send.return_value = {"targetInfos": []}
+                monitor._refresh_tabs(_MonitorState(browser=browser), FakePlaywrightError)
+                session.send.assert_called_once_with("Target.getTargets")
+
+    def test_approved_reconnection_checks_for_missing_chatgpt_tab_again(self):
+        monitor = BrowserMonitor()
+        browser = Mock(contexts=[])
+        browser.new_browser_cdp_session.return_value.send.return_value = {"targetInfos": []}
+        playwright = Mock()
+        playwright.chromium.connect_over_cdp.return_value = browser
+        state = _MonitorState(initial_chatgpt_tab_checked=True)
+        with patch("live_gpt.browser.discover_cdp_endpoint", return_value="http://127.0.0.1:9222"):
+            monitor._try_connect(playwright, FakePlaywrightError, state)
+        self.assertFalse(state.initial_chatgpt_tab_checked)
+        monitor._refresh_tabs(state, FakePlaywrightError)
+        browser.new_browser_cdp_session.return_value.send.assert_called_with(
+            "Target.createTarget", {"url": "https://chatgpt.com/"},
+        )
+
     def test_approved_connection_discovers_tabs_without_renderer_calls(self):
         monitor = BrowserMonitor()
         page = Mock(url="https://chatgpt.com/c/conversation")
@@ -635,6 +715,7 @@ class BrowserMonitorTests(unittest.TestCase):
         self.assertIs(state.browser, browser)
         page.title.assert_not_called()
         page.emulate_media.assert_not_called()
+        browser.new_browser_cdp_session.return_value.send.assert_called_once_with("Target.getTargets")
         playwright.chromium.connect_over_cdp.assert_called_once_with(
             "http://127.0.0.1:9222", timeout=60_000, no_defaults=True,
         )

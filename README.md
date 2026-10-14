@@ -242,6 +242,8 @@ that was started with remote debugging enabled. It discovers ChatGPT tabs and
 lists them by page title beside the **LiveAI** heading, refreshing the list as
 tabs open, close, or navigate. Tab titles come from the browser's target list,
 so a busy or frozen ChatGPT page does not stall discovery after approval.
+After connecting, if no ChatGPT tab is found, LiveAI opens `chatgpt.com` in a
+new tab in that browser. It checks once per connection to avoid duplicate tabs.
 When no debuggable browser is available, LiveAI
 opens the current user's `edge://inspect/#remote-debugging` or
 `chrome://inspect/#remote-debugging` settings page. LiveAI turns on **Allow

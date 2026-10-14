@@ -8,7 +8,7 @@ import tempfile
 import time
 import unittest
 
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Error as PlaywrightError, sync_playwright, TimeoutError as PlaywrightTimeoutError
 from websockets.asyncio.server import serve
 from websockets.sync.client import connect
 
@@ -170,6 +170,44 @@ class BridgeLifecycleTests(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("LIVE_GPT_TEST_BROWSER"), "Browser channel not selected")
 class BridgeBrowserTests(unittest.TestCase):
+    def test_empty_connected_browser_opens_one_chatgpt_tab_through_relay(self):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        with tempfile.TemporaryDirectory() as profile, sync_playwright() as playwright:
+            context = playwright.chromium.launch_persistent_context(
+                profile, channel=os.environ["LIVE_GPT_TEST_BROWSER"], headless=True,
+                args=[f"--remote-debugging-port={port}"],
+            )
+            context.route("https://chatgpt.com/**", lambda route: route.fulfill(
+                body="<title>ChatGPT test</title><p>New conversation</p>",
+            ))
+            original = context.pages[0]
+            bridge = ChatGPTCDPBridge(f"http://127.0.0.1:{port}")
+            try:
+                connected = playwright.chromium.connect_over_cdp(
+                    bridge.start(), no_defaults=True, timeout=5_000,
+                )
+                monitor = BrowserMonitor()
+                state = _MonitorState(browser=connected)
+                for _ in range(40):
+                    monitor._refresh_tabs(state, PlaywrightError)
+                    if state.last_tabs:
+                        break
+                    original.wait_for_timeout(50)
+                self.assertEqual(len(state.last_tabs), 1)
+                self.assertEqual(state.last_tabs[0]["url"], "https://chatgpt.com/")
+                self.assertEqual(len(context.pages), 2)
+                self.assertFalse(original.is_closed())
+                self.assertEqual(original.url, "about:blank")
+                for _ in range(3):
+                    monitor._refresh_tabs(state, PlaywrightError)
+                self.assertEqual(len(context.pages), 2)
+                connected.close()
+            finally:
+                bridge.close()
+                context.close()
+
     def test_selected_background_focus_works_through_filtered_connection(self):
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))

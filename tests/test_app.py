@@ -2109,6 +2109,20 @@ class TrayControllerBrowserTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_debug_connected_without_chat_shows_automatic_tab_hint(self) -> None:
+        application = QApplication.instance() or QApplication([])
+        window = OverlayWindow()
+        try:
+            window.set_chatgpt_tabs([])
+            window.set_debug_connection(True)
+            self.assertEqual(window.chatgpt_tab_combo.itemText(0), "Debugger connected — waiting for chat")
+            self.assertIn("LiveAI opens chatgpt.com in a new tab", window.chatgpt_tab_combo.toolTip())
+            self.assertTrue(window.remote_debugging_button.isHidden())
+            window.set_browser_status("Could not open ChatGPT tab: Creation failed")
+            self.assertEqual(window.chatgpt_tab_combo.toolTip(), "Could not open ChatGPT tab: Creation failed")
+        finally:
+            window.close()
+
     def test_privilege_warning_notifies_and_reveals_overlay(self) -> None:
         application = QApplication.instance() or QApplication([])
         controller = TrayController.__new__(TrayController)

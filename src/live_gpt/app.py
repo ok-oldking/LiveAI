@@ -3812,10 +3812,10 @@ class OverlayWindow(QMainWindow):
 
     def _show_browser_connection_hint(self) -> None:
         if self._debug_connected:
-            self.chatgpt_tab_combo.setItemText(0, tr("Debugger connected — open ChatGPT"))
+            self.chatgpt_tab_combo.setItemText(0, tr("Debugger connected — waiting for ChatGPT"))
         message = (
-            tr("Debugger connected. No ChatGPT tab is open. Open chatgpt.com in this browser; "
-            "LiveAI will detect the tab automatically.")
+            tr("Debugger connected. If no ChatGPT tab is open when connecting, "
+            "LiveAI opens chatgpt.com in a new tab.")
             if self._debug_connected else
             tr("Connect to a ChatGPT window to begin")
         )
@@ -3825,7 +3825,8 @@ class OverlayWindow(QMainWindow):
     def set_browser_status(self, status: str) -> None:
         # Connection state takes precedence over queued setup/retry messages.
         # The explicit disconnect signal clears this state on a real disconnect.
-        if self._debug_connected and not self._browser_connected:
+        if (self._debug_connected and not self._browser_connected
+                and not status.startswith("Could not open ChatGPT tab:")):
             self._show_browser_connection_hint()
             return
         self.chatgpt_tab_combo.setToolTip(translate_message(status))

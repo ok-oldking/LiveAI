@@ -230,6 +230,7 @@ class _MonitorState:
     browser: Any | None = None
     bridge: ChatGPTCDPBridge | None = None
     discovery_session: Any | None = None
+    initial_chatgpt_tab_checked: bool = False
     focus_page: Any | None = None
     focus_session: Any | None = None
     settings_opened: bool = False
@@ -722,6 +723,7 @@ class BrowserMonitor(QThread):
         state.connection_error = None
         state.settings_opened = False
         state.settings_attempted = False
+        state.initial_chatgpt_tab_checked = False
         self.debug_connection_changed.emit(True)
         self._set_status("Browser connected")
         logger.info(f"Connected to browser endpoint={endpoint!r}")
@@ -774,6 +776,27 @@ class BrowserMonitor(QThread):
         elif tabs != state.last_tabs:
             state.last_tabs = tabs
             self.tabs_changed.emit(tabs)
+        if tabs is not None and not state.initial_chatgpt_tab_checked:
+            targets = target_snapshot.get("targetInfos") if isinstance(target_snapshot, dict) else None
+            if not isinstance(targets, list):
+                return
+            # Existing targets can precede their Playwright page attachment.
+            # Check both views before deciding that a new tab is needed.
+            state.initial_chatgpt_tab_checked = True
+            if tabs or any(
+                isinstance(target, dict) and target.get("type") == "page"
+                and isinstance(target.get("url"), str) and is_chatgpt_url(target["url"])
+                for target in targets
+            ) or self._stop_requested or self._retry_connection_requested:
+                return
+            try:
+                # Creating about:blank through new_page() would be filtered out
+                # by the relay. Create the ChatGPT target directly instead.
+                state.discovery_session.send("Target.createTarget", {"url": "https://chatgpt.com/"})
+                logger.info("Opened ChatGPT in a new tab after connecting to the browser")
+            except playwright_error as error:
+                logger.warning(f"Could not open ChatGPT tab: {error}")
+                self._set_status(f"Could not open ChatGPT tab: {error}")
 
     @staticmethod
     def _collect_chatgpt_tabs(
