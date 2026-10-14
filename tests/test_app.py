@@ -2116,12 +2116,17 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.tray_icon = Mock()
         try:
             controller.window.hide()
-            controller._warn_hotkey_privileges()
+            controller._warn_hotkey_privileges("Administrator: Terminal <dev>")
             self.assertFalse(controller.window.isHidden())
             self.assertFalse(controller._hotkey_privilege_notice.isHidden())
             self.assertFalse(controller.window._can_auto_hide())
             controller.tray_icon.showMessage.assert_called_once()
-            self.assertIn("run it as administrator", controller._hotkey_privilege_notice.text())
+            self.assertEqual(controller._hotkey_privilege_notice.text(),
+                             "Run LiveAI as administrator to make microphone shortcuts work in this window:\n\n"
+                             "Administrator: Terminal <dev>")
+            self.assertEqual(controller._hotkey_privilege_notice.textFormat(), Qt.TextFormat.PlainText)
+            self.assertEqual(controller.tray_icon.showMessage.call_args.args[1],
+                             controller._hotkey_privilege_notice.text())
             controller._hotkey_privilege_notice.accept()
         finally:
             controller.window.close()

@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from live_gpt.privileges import foreground_requires_administrator
+from live_gpt.privileges import AdministratorWindow, foreground_administrator_window
 
 
 class PrivilegeTests(unittest.TestCase):
@@ -9,6 +9,13 @@ class PrivilegeTests(unittest.TestCase):
         kernel, advapi, user = Mock(), Mock(), Mock()
         kernel.OpenProcess.side_effect = lambda _access, _inherit, pid: pid
         user.GetForegroundWindow.return_value = 100
+        user.GetWindowTextLengthW.return_value = len("Administrator: Terminal")
+
+        def window_text(_hwnd, title, _length):
+            title.value = "Administrator: Terminal"
+            return len(title.value)
+
+        user.GetWindowTextW.side_effect = window_text
 
         def foreground(_hwnd, pid):
             pid._obj.value = 2
@@ -32,12 +39,12 @@ class PrivilegeTests(unittest.TestCase):
              patch('live_gpt.privileges.os.getpid', return_value=1), \
              patch('live_gpt.privileges.ctypes.WinDLL', create=True,
                    side_effect=[kernel, advapi, user]):
-            result = foreground_requires_administrator()
+            result = foreground_administrator_window()
         return result, kernel
 
     def test_mismatch_and_handle_cleanup(self):
         result, kernel = self.probe({1: False, 2: True})
-        self.assertTrue(result)
+        self.assertEqual(result, AdministratorWindow(100, "Administrator: Terminal"))
         self.assertEqual(kernel.CloseHandle.call_count, 4)
 
     def test_no_warning_for_equal_privileges_or_unknown(self):

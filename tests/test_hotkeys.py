@@ -19,6 +19,7 @@ from live_gpt.hotkeys import (  # noqa: E402
     VK_CONTROL,
     VK_SHIFT,
 )
+from live_gpt.privileges import AdministratorWindow  # noqa: E402
 
 
 class GlobalHotkeyMonitorTests(unittest.TestCase):
@@ -38,25 +39,86 @@ class GlobalHotkeyMonitorTests(unittest.TestCase):
             clock=lambda: self.now,
         )
 
-    @patch("live_gpt.hotkeys.foreground_requires_administrator")
+    @patch("live_gpt.hotkeys.foreground_administrator_window")
     def test_privilege_warning_once_even_after_restart_and_settings(self, check):
         events = []
-        self.monitor.administrator_required.connect(lambda: events.append("warning"))
-        check.return_value = False
+        self.monitor.administrator_required.connect(events.append)
+        check.return_value = None
         self.monitor.check_foreground_privileges()
         self.assertEqual(events, [])
-        check.return_value = True
+        check.return_value = AdministratorWindow(100, "Administrator: Terminal")
+        self.monitor.check_foreground_privileges()
+        self.now += 14.999
+        self.monitor.check_foreground_privileges()
+        self.assertEqual(events, [])
+        self.now += 0.001
         self.monitor.check_foreground_privileges()
         self.monitor.stop()
         self.monitor.update_bindings(HotkeyBinding.from_sequence("Left Alt"))
         self.monitor.start()
         self.monitor.check_foreground_privileges()
-        self.assertEqual(events, ["warning"])
-        self.assertEqual(check.call_count, 2)
+        self.assertEqual(events, ["Administrator: Terminal"])
+        self.assertEqual(check.call_count, 4)
         self.assertFalse(self.monitor._privilege_timer.isActive())
         self.monitor.stop()
 
-    @patch("live_gpt.hotkeys.foreground_requires_administrator", return_value=True)
+    @patch("live_gpt.hotkeys.foreground_administrator_window")
+    def test_privilege_wait_resets_after_leaving_or_switching_windows(self, check):
+        events = []
+        self.monitor.administrator_required.connect(events.append)
+        check.return_value = AdministratorWindow(100, "Terminal")
+        self.monitor.check_foreground_privileges()
+        self.now += 14
+        self.monitor.check_foreground_privileges()
+        check.return_value = None
+        self.monitor.check_foreground_privileges()
+        check.return_value = AdministratorWindow(100, "Terminal")
+        self.now += 1
+        self.monitor.check_foreground_privileges()
+        self.now += 14
+        self.monitor.check_foreground_privileges()
+        self.assertEqual(events, [])
+        # A different administrator window resets the wait even with the same title.
+        check.return_value = AdministratorWindow(200, "Terminal")
+        self.monitor.check_foreground_privileges()
+        self.now += 14
+        self.monitor.check_foreground_privileges()
+        self.assertEqual(events, [])
+        # Updating the title on the same window does not reset the wait.
+        check.return_value = AdministratorWindow(200, "Administrator: Updated Terminal")
+        self.now += 1
+        self.monitor.check_foreground_privileges()
+        self.assertEqual(events, ["Administrator: Updated Terminal"])
+
+    @patch("live_gpt.hotkeys.foreground_administrator_window",
+           return_value=AdministratorWindow(100, "Terminal"))
+    def test_privilege_wait_resets_when_monitor_stops_or_keys_are_disabled(self, check):
+        events = []
+        self.monitor.administrator_required.connect(events.append)
+        self.monitor.check_foreground_privileges()
+        self.now += 14
+        self.monitor.stop()
+        self.monitor.start()
+        try:
+            self.monitor.check_foreground_privileges()
+            self.now += 14
+            self.monitor.check_foreground_privileges()
+            self.assertEqual(events, [])
+            self.monitor.update_bindings(HotkeyBinding.from_sequence("Left Alt"), enabled={})
+            self.now += 20
+            self.monitor.check_foreground_privileges()
+            self.monitor.update_bindings(HotkeyBinding.from_sequence("Left Alt"))
+            self.monitor.check_foreground_privileges()
+            self.now += 14
+            self.monitor.check_foreground_privileges()
+            self.assertEqual(events, [])
+            self.now += 1
+            self.monitor.check_foreground_privileges()
+            self.assertEqual(events, ["Terminal"])
+        finally:
+            self.monitor.stop()
+
+    @patch("live_gpt.hotkeys.foreground_administrator_window")
     def test_privilege_check_skips_disabled_and_cleared_microphone_keys(self, check):
         self.monitor.update_bindings(HotkeyBinding.from_sequence("Left Alt"), enabled={})
         self.monitor.check_foreground_privileges()

@@ -5253,14 +5253,11 @@ class TrayController:
         self._start_stt_preload()
         self._start_local_tts_preload()
 
-    def _warn_hotkey_privileges(self) -> None:
+    def _warn_hotkey_privileges(self, window_title: str) -> None:
         title = tr("Microphone shortcuts may not work")
         message = (
-            tr("The foreground window is running as administrator. Windows may block "
-            "LiveAI's microphone shortcuts while that window is in front.\n\n"
-            "Exit LiveAI and run it as administrator (or use start-game-mode.ps1) "
-            "to allow microphone shortcuts in administrator windows.\n\n"
-            "This warning appears only once per app run.")
+            tr("Run LiveAI as administrator to make microphone shortcuts work in this window:\n\n{window_title}",
+               window_title=window_title or tr("Untitled window"))
         )
         logger.warning(title + ": foreground process is elevated")
         self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Warning, 10_000)
@@ -5269,6 +5266,7 @@ class TrayController:
         self._hotkey_privilege_notice = QMessageBox(
             QMessageBox.Icon.Warning, title, message, QMessageBox.StandardButton.Ok, self.window
         )
+        self._hotkey_privilege_notice.setTextFormat(Qt.TextFormat.PlainText)
         self._hotkey_privilege_notice.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self._hotkey_privilege_notice.open()
         self._hotkey_privilege_notice.finished.connect(

@@ -10,7 +10,7 @@ from PySide6.QtCore import QObject, QTimer, Signal, Qt, QEvent
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QLineEdit, QToolButton
 
-from .privileges import foreground_requires_administrator
+from .privileges import foreground_administrator_window
 from .localization import tr
 
 
@@ -271,7 +271,7 @@ class GlobalHotkeyMonitor(QObject):
     hold_without_screenshot_released = Signal()
     send_pressed = Signal()
     send_without_screenshot_pressed = Signal()
-    administrator_required = Signal()
+    administrator_required = Signal(str)
 
     def __init__(
         self,
@@ -309,6 +309,8 @@ class GlobalHotkeyMonitor(QObject):
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self.poll_now)
         self._administrator_warned = False
+        self._administrator_hwnd: int | None = None
+        self._administrator_started_at: float | None = None
         self._privilege_timer = QTimer(self)
         self._privilege_timer.setInterval(1_000)
         self._privilege_timer.timeout.connect(self.check_foreground_privileges)
@@ -330,6 +332,8 @@ class GlobalHotkeyMonitor(QObject):
         enabled: dict[str, bool] | None = None,
     ) -> None:
         self._enabled = dict(enabled) if enabled is not None else None
+        self._administrator_hwnd = None
+        self._administrator_started_at = None
         self._bindings = {
             "hold": hold,
             "hold_without_screenshot": (
@@ -362,11 +366,25 @@ class GlobalHotkeyMonitor(QObject):
             and (self._enabled is None or self._enabled.get(name, False))
             for name in ("hold", "hold_without_screenshot")
         ):
+            self._administrator_hwnd = None
+            self._administrator_started_at = None
             return
-        if foreground_requires_administrator():
+        window = foreground_administrator_window()
+        if window is None:
+            self._administrator_hwnd = None
+            self._administrator_started_at = None
+            return
+        now = self._clock()
+        if window.hwnd != self._administrator_hwnd:
+            self._administrator_hwnd = window.hwnd
+            self._administrator_started_at = now
+        if (
+            self._administrator_started_at is not None
+            and now - self._administrator_started_at >= 15.0
+        ):
             self._administrator_warned = True
             self._privilege_timer.stop()
-            self.administrator_required.emit()
+            self.administrator_required.emit(window.title)
 
     @property
     def hold_delay_seconds(self) -> float:
@@ -374,6 +392,8 @@ class GlobalHotkeyMonitor(QObject):
 
     def stop(self) -> None:
         self._privilege_timer.stop()
+        self._administrator_hwnd = None
+        self._administrator_started_at = None
         if self._hold_emitted["hold"]:
             self.hold_released.emit()
         if self._hold_emitted["hold_without_screenshot"]:

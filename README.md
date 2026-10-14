@@ -173,24 +173,12 @@ registering or swallowing the keys, so the foreground program continues to
 receive the same keystrokes. Changes are saved for the current Windows user.
 
 If microphone shortcuts stop working when a game is in the foreground, check
-LiveAI's warning: once per app run, an elevated foreground window triggers a
-system notification and brings the overlay forward with an explanation, if
-LiveAI is not elevated and a microphone shortcut is enabled. Dismiss the
-warning with OK; it will not repeat when switching windows or changing settings.
-
-If you see this warning, check
-whether the game runs as administrator. Windows can block LiveAI's key-state
-polling across that privilege boundary. Exit LiveAI from its tray menu, then
-launch it at the same privilege level and accept the Windows UAC prompt:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\start-game-mode.ps1
-```
-
-This launcher uses the project's `.venv` and working directory. It requests
-administrator privileges for this launch only; normal launches are unchanged.
-It addresses the Windows privilege mismatch; game-specific input restrictions
-may still require separate troubleshooting.
+LiveAI's warning: staying in the same administrator window for 15 continuous
+seconds triggers a system notification and brings the overlay forward, if
+LiveAI is not elevated and a microphone shortcut is enabled. Leaving that
+window resets the wait. The warning shows the window title and asks you to run
+LiveAI as administrator so microphone shortcuts work in that window. Dismiss
+the warning with OK; it appears only once per app run.
 
 Preferences are stored as JSON in `%APPDATA%\Live GPT\config.json`. The file is
 updated automatically when a preference changes and includes the language,

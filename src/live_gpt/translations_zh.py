@@ -322,5 +322,6 @@ TRANSLATIONS = {
     "Remote debugging enabled at {endpoint}": "已启用远程调试：{endpoint}",
     "No system tray is available on this desktop.": "此桌面没有可用的系统托盘。",
     "Microphone shortcuts may not work": "麦克风快捷键可能无法使用",
-    "The foreground window is running as administrator. Windows may block LiveAI's microphone shortcuts while that window is in front.\n\nExit LiveAI and run it as administrator (or use start-game-mode.ps1) to allow microphone shortcuts in administrator windows.\n\nThis warning appears only once per app run.": "前台窗口正以管理员身份运行。该窗口位于前台时，Windows 可能会阻止 LiveAI 的麦克风快捷键。\n\n请退出 LiveAI 并以管理员身份运行（或使用 start-game-mode.ps1），以便在管理员窗口中使用麦克风快捷键。\n\n此提示每次启动仅显示一次。",
+    "Run LiveAI as administrator to make microphone shortcuts work in this window:\n\n{window_title}": "请以管理员身份运行 LiveAI，以便在此窗口中使用麦克风快捷键：\n\n{window_title}",
+    "Untitled window": "无标题窗口",
 }

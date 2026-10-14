@@ -64,6 +64,14 @@ class LocalizationTests(unittest.TestCase):
         localization.set_language("en")
         self.assertEqual(translate_message(translated), message)
 
+    def test_privilege_warning_translates_and_preserves_window_title(self) -> None:
+        localization.set_language("zh")
+        self.assertEqual(
+            tr("Run LiveAI as administrator to make microphone shortcuts work in this window:\n\n{window_title}",
+               window_title="Administrator: Terminal <dev>"),
+            "请以管理员身份运行 LiveAI，以便在此窗口中使用麦克风快捷键：\n\nAdministrator: Terminal <dev>",
+        )
+
     def test_first_launch_selects_and_saves_matching_language(self) -> None:
         for locale, expected in (("zh_CN", "zh"), ("en_US", "en"), ("fr_FR", "en")):
             with self.subTest(locale=locale), tempfile.TemporaryDirectory() as directory, patch(
