@@ -1240,7 +1240,7 @@ class SettingsDialogTests(unittest.TestCase):
             QKeySequence("Ctrl+D"),
         )
         try:
-            self.assertEqual(dialog.windowTitle(), "Live GPT settings")
+            self.assertEqual(dialog.windowTitle(), "LiveAI settings")
             self.assertEqual(
                 dialog.hotkey_section.objectName(),
                 "settingsPage",
@@ -1272,7 +1272,7 @@ class SettingsDialogTests(unittest.TestCase):
                 dialog.language_combo.currentText(),
                 "简体中文",
             )
-            self.assertEqual(dialog.windowTitle(), "Live GPT 设置")
+            self.assertEqual(dialog.windowTitle(), "LiveAI 设置")
             self.assertEqual(dialog.recording_nav_button.text(), "录音")
             dialog.language_combo.setCurrentIndex(dialog.language_combo.findData("en"))
 

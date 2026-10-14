@@ -1,7 +1,7 @@
 """Small standalone GPT-SoVITS streaming server copied into an installation.
 
 This file intentionally only imports GPT-SoVITS/runtime dependencies so it can
-be launched by the installation's embedded Python rather than Live GPT's Python.
+be launched by the installation's embedded Python rather than LiveAI's Python.
 """
 from __future__ import annotations
 

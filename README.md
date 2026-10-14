@@ -1,11 +1,11 @@
-# live-gpt
+# LiveAI
 voice and share screen chat with your web chatbot, free of tokens
 
 ## Run
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-live-gpt
+LiveAI
 ```
 
 The app starts as a translucent, always-on-top overlay centered above the
@@ -27,7 +27,7 @@ with one character. Leading and trailing whitespace is trimmed from dictation
 and sent prompts. A one-character English voice result remains in the editor
 for correction; manually typed one-character
 messages are still allowed.
-Click or double-click the tray icon, or choose **Show Live GPT** from its menu,
+Click or double-click the tray icon, or choose **Show LiveAI** from its menu,
 to reveal the overlay and turn auto-hide off. Its controls stay visible until
 you move the pointer onto the overlay. Monitor, resolution, and display scaling
 changes automatically move an offscreen overlay back into the usable screen
@@ -35,7 +35,7 @@ area; revealing it from the tray also checks its position. The **Exit**
 button closes the app.
 
 To capture the overlay in broadcast software, add a **Window capture** source
-and select **Live GPT** (the executable may be listed as `python.exe`,
+and select **LiveAI** (the executable may be listed as `python.exe`,
 `pythonw.exe`, or `live-gpt.exe`). Keep the overlay shown and turn **Auto-hide**
 off while streaming. The overlay uses a normal top-level window so broadcast
 window lists can include it. A hidden owner keeps it out of the Windows taskbar;
@@ -47,14 +47,14 @@ capture method and broadcast software.
 Press and hold the microphone button to start ChatGPT's browser dictation
 through Playwright. Releasing it clicks ChatGPT's **Done** control, waits for
 the dictated text to appear in ChatGPT's composer, and copies that text into
-the Live GPT input. If ChatGPT returns no words, the overlay leaves the finishing
+the LiveAI input. If ChatGPT returns no words, the overlay leaves the finishing
 state when the browser microphone is ready again. The transcription wait is
 limited to 20 seconds. The ChatGPT tab owns microphone capture and speech
 recognition, so the browser may ask for microphone permission the first time.
-Live GPT does not record audio locally or download a speech-recognition model.
+LiveAI does not record audio locally or download a speech-recognition model.
 While the button is held, the input area is replaced by a waiting state until
 ChatGPT's dictation-end control appears, followed by a listening state. Closing
-the app cancels these browser waits promptly. Before a new session, Live GPT
+the app cancels these browser waits promptly. Before a new session, LiveAI
 cancels any stale browser dictation. A mouse dictation must remain held for at
 least 0.5 seconds after it is pressed or it is cancelled. The global
 hold hotkey waits 0.3 seconds before starting, so a quick tap has no effect.
@@ -77,7 +77,7 @@ preferences need one manual reselection. A missing or ambiguous window never
 selects another window automatically; a temporarily missing selection is restored
 when it returns unless you choose a different source. A window is listed only when its area
 is greater than one eighth of the display containing it. When sending with a
-screenshot, Live GPT removes existing ChatGPT image attachments, captures the
+screenshot, LiveAI removes existing ChatGPT image attachments, captures the
 chosen source, scales its longest edge down to 1920 pixels when necessary, and
 uploads it as lossless WebP before clicking Send. Window capture uses the
 BitBlt/PrintWindow approach with full-content rendering enabled.
@@ -88,7 +88,7 @@ and recording screenshots. Desktop screenshots keep their existing behavior.
 When a screenshot source is selected, the **With Screenshot** action remains
 available even with an empty prompt. If the editor also contains text, a
 paper-plane **No Screenshot** action appears so the prompt can be sent without
-changing the selector. For dictated prompts, Live GPT
+changing the selector. For dictated prompts, LiveAI
 captures and pastes the selected screenshot into ChatGPT after the microphone
 has remained pressed for 0.5 seconds. With browser dictation, it waits for the
 image attachment to appear and begin uploading before clicking ChatGPT's
@@ -97,7 +97,7 @@ still waits for upload completion. A cancelled short press uploads nothing.
 Releasing while the browser is still preparing cancels startup and removes
 the pending screenshot. Moving dictation controls (microphone, stop, and cancel)
 are clicked only after they are visible, enabled, and no longer busy. If a
-dictation operation fails, Live GPT cancels any remaining browser recording
+dictation operation fails, LiveAI cancels any remaining browser recording
 and restores the original composer text when possible.
 Starting another recording before the pending prompt is sent removes the
 previously uploaded screenshot before preparing the new one.
@@ -133,7 +133,7 @@ check result and logs. Changing GPUs reloads the server on the next check or
 playback. A CUDA-enabled embedded PyTorch runtime is required; CPU fallback is
 disabled, and an unavailable GPU causes a visible startup error.
 
-Live GPT copies `sovits_server.py` into the selected installation and runs it with
+LiveAI copies `sovits_server.py` into the selected installation and runs it with
 `runtime/python.exe`. Before reporting ready, it warms pronunciation models and
 performs a silent synthesis with the selected reference voice. First startup can
 take several minutes and has a separate 240-second limit. It reuses reference-audio features and
@@ -153,7 +153,7 @@ changing global pip settings. **Record microphone** tests transcription;
 **Play text** tests GPT-SoVITS playback.
 Synthesis errors appear in the playback status and server output is captured in
 the logs. After warmup, speech streams in sentence fragments. If no audio arrives
-for 30 seconds during playback, Live GPT stops the speech server
+for 30 seconds during playback, LiveAI stops the speech server
 and reports a timeout; the next attempt starts a fresh server.
 
 Hotkey defaults are
@@ -168,19 +168,19 @@ Recording shortcuts automatically send successful dictation meeting the
 character minimum above; the UI microphone always requires manual sending. Starting either
 recording shortcut stops active local or
 browser voice playback. The shortcuts work while the
-overlay is hidden or unfocused. Live GPT observes their key state without
+overlay is hidden or unfocused. LiveAI observes their key state without
 registering or swallowing the keys, so the foreground program continues to
 receive the same keystrokes. Changes are saved for the current Windows user.
 
 If microphone shortcuts stop working when a game is in the foreground, check
-Live GPT's warning: once per app run, an elevated foreground window triggers a
+LiveAI's warning: once per app run, an elevated foreground window triggers a
 system notification and brings the overlay forward with an explanation, if
-Live GPT is not elevated and a microphone shortcut is enabled. Dismiss the
+LiveAI is not elevated and a microphone shortcut is enabled. Dismiss the
 warning with OK; it will not repeat when switching windows or changing settings.
 
 If you see this warning, check
-whether the game runs as administrator. Windows can block Live GPT's key-state
-polling across that privilege boundary. Exit Live GPT from its tray menu, then
+whether the game runs as administrator. Windows can block LiveAI's key-state
+polling across that privilege boundary. Exit LiveAI from its tray menu, then
 launch it at the same privilege level and accept the Windows UAC prompt:
 
 ```powershell
@@ -206,7 +206,7 @@ JSON-configured launch.
 The editor and microphone remain disabled until a ChatGPT window is connected.
 Status tips appear as the editor hint rather than in a separate row; errors use
 a red hint and a visible, wrapping banner above the input. When ChatGPT shows
-a usage-limit notice, Live GPT displays its message, including any reset time,
+a usage-limit notice, LiveAI displays its message, including any reset time,
 and stops waiting for a reply. Prompts rejected before sending stay in the editor
 so they can be sent after usage resets.
 
@@ -249,32 +249,32 @@ another prompt. Press
 **Enter** to send a prompt or **Shift+Enter** to insert a newline. With no
 screenshot selected, the send actions remain hidden while the editor is empty.
 
-At startup, Live GPT connects through Playwright to a local Chromium browser
+At startup, LiveAI connects through Playwright to a local Chromium browser
 that was started with remote debugging enabled. It discovers ChatGPT tabs and
-lists them by page title beside the **Live GPT** heading, refreshing the list as
+lists them by page title beside the **LiveAI** heading, refreshing the list as
 tabs open, close, or navigate. Tab titles come from the browser's target list,
 so a busy or frozen ChatGPT page does not stall discovery after approval.
-When no debuggable browser is available, Live GPT
+When no debuggable browser is available, LiveAI
 opens the current user's `edge://inspect/#remote-debugging` or
-`chrome://inspect/#remote-debugging` settings page. Live GPT turns on **Allow
+`chrome://inspect/#remote-debugging` settings page. LiveAI turns on **Allow
 remote debugging for this browser instance** through Windows accessibility,
 verifies that the browser's per-user `DevToolsActivePort` marker contains a live
 endpoint, and then connects. If the browser is already open, the settings page
 opens in a new tab without replacing the active page. The browser can still ask
-the user to approve the incoming connection. Live GPT keeps one approval request
+the user to approve the incoming connection. LiveAI keeps one approval request
 pending until the user chooses **Allow** or **Deny**, preventing unanswered
 requests from creating a stack of dialogs. After choosing **Deny**, click
 **Enable Debugging** to make another request; the browser tabs remain unchanged.
-If opening or enabling the debugging settings fails, Live GPT stops automatic
+If opening or enabling the debugging settings fails, LiveAI stops automatic
 setup attempts. Click **Enable Debugging** to retry after correcting the issue;
 it checks that the browser address bar is accessible before opening a new tab.
 Attached ChatGPT pages retain the browser's native color scheme through
-Playwright's `no_defaults` connection option (Playwright 1.62+). Live GPT uses
+Playwright's `no_defaults` connection option (Playwright 1.62+). LiveAI uses
 focus emulation to keep the selected ChatGPT tab active while you use another
 window, without bringing the browser forward. Switching tabs, disconnecting,
 or exiting restores normal tab focus. This may reduce background completion
 notifications; phone notification delivery also depends on ChatGPT's settings.
-Live GPT does not launch the browser with debugging flags or create
+LiveAI does not launch the browser with debugging flags or create
 a separate profile. The optional `LIVE_GPT_CDP_ENDPOINT` environment variable
 can point the app at a specific CDP HTTP or WebSocket endpoint.
 

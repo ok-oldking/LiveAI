@@ -82,7 +82,7 @@ _STATUS_TEXT = {
     "Looking for ChatGPT windows…": "Looking for chat windows…",
     "No ChatGPT tabs open": "No chat tabs open",
     "Debugger connected — open ChatGPT": "Debugger connected — open chat",
-    "Debugger connected. No ChatGPT tab is open. Open chatgpt.com in this browser; Live GPT will detect the tab automatically.": "Debugger connected. No chat tab is open. Open chatgpt.com in this browser; Live GPT will detect the tab automatically.",
+    "Debugger connected. No ChatGPT tab is open. Open chatgpt.com in this browser; LiveAI will detect the tab automatically.": "Debugger connected. No chat tab is open. Open chatgpt.com in this browser; LiveAI will detect the tab automatically.",
     "Connect to a ChatGPT window to begin": "Connect to a chat window to begin",
     "Waiting for ChatGPT…": "Waiting for a reply…",
     "Sending to ChatGPT…": "Sending…",

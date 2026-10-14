@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "live-gpt"
+name = "LiveAI"
 version = "0.1.0"
 description = "Voice and screen-sharing chat for web chatbots"
 readme = "README.md"
@@ -16,6 +16,8 @@ dependencies = [
 ]
 
 [project.gui-scripts]
+LiveAI = "live_gpt.app:main"
+LiveGPT = "live_gpt.app:main"
 live-gpt = "live_gpt.app:main"
 
 [tool.setuptools.package-data]

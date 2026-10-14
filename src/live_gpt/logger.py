@@ -170,7 +170,7 @@ def config_logger(config: dict | None = None, name: str = "live-gpt") -> None:
 
     shutdown_logger()
 
-    parser = argparse.ArgumentParser(description="Live GPT logging options")
+    parser = argparse.ArgumentParser(description="LiveAI logging options")
     parser.add_argument("--parent_pid", type=int, default=0)
     args, _ = parser.parse_known_args()
 

@@ -801,7 +801,7 @@ class _PetDownloadThread(QThread):
 
 
 class HotkeyConfigDialog(QDialog):
-    """Edit Live GPT settings, including pass-through global shortcuts."""
+    """Edit LiveAI settings, including pass-through global shortcuts."""
     pet_settings_changed = Signal(str, str, int)
     subtitle_rows_changed = Signal(int)
 
@@ -849,7 +849,7 @@ class HotkeyConfigDialog(QDialog):
             "tts": [],
         }
         self.setObjectName("settingsDialog")
-        self.setWindowTitle(tr("Live GPT settings"))
+        self.setWindowTitle(tr("LiveAI settings"))
         self.setWindowFlags(
             Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint
         )
@@ -874,7 +874,7 @@ class HotkeyConfigDialog(QDialog):
         title_layout = QHBoxLayout(self.title_bar)
         title_layout.setContentsMargins(20, 0, 12, 0)
         title_layout.setSpacing(10)
-        app_title = QLabel("Live GPT")
+        app_title = QLabel("LiveAI")
         app_title.setObjectName("settingsAppTitle")
         title_separator = QLabel("/")
         title_separator.setObjectName("settingsTitleSeparator")
@@ -968,7 +968,7 @@ class HotkeyConfigDialog(QDialog):
         hotkey_title = QLabel(tr("Keyboard shortcuts"))
         hotkey_title.setObjectName("settingsPageTitle")
         hotkey_description = QLabel(
-            tr("Control Live GPT without leaving the app you are using.")
+            tr("Control LiveAI without leaving the app you are using.")
         )
         hotkey_description.setObjectName("settingsPageDescription")
         hotkey_description.setWordWrap(True)
@@ -3185,7 +3185,7 @@ class OverlayWindow(QMainWindow):
         self._preferred_capture_source_key = ""
         self._capture_source_runtime_key = ""
         self._preferred_chatgpt_url = ""
-        self.setWindowTitle("Live GPT")
+        self.setWindowTitle("LiveAI")
         self.setMinimumSize(760, 180)
         # Broadcast window pickers filter out Qt.Tool / WS_EX_TOOLWINDOW.
         self.setWindowFlags(
@@ -3235,7 +3235,7 @@ class OverlayWindow(QMainWindow):
         self.title_bar.setObjectName("overlayTitleBar")
         title_layout = QHBoxLayout(self.title_bar)
         title_layout.setContentsMargins(0, 0, 0, 0)
-        title = QLabel("Live GPT")
+        title = QLabel("LiveAI")
         title.setObjectName("overlayTitle")
         title_layout.addWidget(title)
 
@@ -3815,7 +3815,7 @@ class OverlayWindow(QMainWindow):
             self.chatgpt_tab_combo.setItemText(0, tr("Debugger connected — open ChatGPT"))
         message = (
             tr("Debugger connected. No ChatGPT tab is open. Open chatgpt.com in this browser; "
-            "Live GPT will detect the tab automatically.")
+            "LiveAI will detect the tab automatically.")
             if self._debug_connected else
             tr("Connect to a ChatGPT window to begin")
         )
@@ -5234,7 +5234,7 @@ class TrayController:
         self._refresh_capture_sources()
 
         self.menu = QMenu()
-        self.show_action = QAction(tr("Show Live GPT"), self.menu)
+        self.show_action = QAction(tr("Show LiveAI"), self.menu)
         self.show_action.triggered.connect(self._show_from_tray)
         self.menu.addAction(self.show_action)
         self.exit_action = QAction(tr("Exit"), self.menu)
@@ -5243,7 +5243,7 @@ class TrayController:
         self._menu_translations = UiTranslations(self.menu)
 
         self.tray_icon = QSystemTrayIcon(self.icon, self.application)
-        self.tray_icon.setToolTip("Live GPT")
+        self.tray_icon.setToolTip("LiveAI")
         self.tray_icon.setContextMenu(self.menu)
         self.tray_icon.activated.connect(self._handle_activation)
         self.tray_icon.show()
@@ -5257,8 +5257,8 @@ class TrayController:
         title = tr("Microphone shortcuts may not work")
         message = (
             tr("The foreground window is running as administrator. Windows may block "
-            "Live GPT's microphone shortcuts while that window is in front.\n\n"
-            "Exit Live GPT and run it as administrator (or use start-game-mode.ps1) "
+            "LiveAI's microphone shortcuts while that window is in front.\n\n"
+            "Exit LiveAI and run it as administrator (or use start-game-mode.ps1) "
             "to allow microphone shortcuts in administrator windows.\n\n"
             "This warning appears only once per app run.")
         )
@@ -6411,18 +6411,18 @@ class TrayController:
 
 def main() -> int:
     config_logger({"debug": True}, name="live-gpt")
-    logger.info(f"Starting Live GPT with pid={os.getpid()} args={sys.argv}")
+    logger.info(f"Starting LiveAI with pid={os.getpid()} args={sys.argv}")
 
     try:
         application = QApplication(sys.argv)
-        application.setApplicationName("Live GPT")
+        application.setApplicationName("LiveAI")
         application.setQuitOnLastWindowClosed(False)
 
         if not QSystemTrayIcon.isSystemTrayAvailable():
             logger.error("No system tray is available on this desktop")
             QMessageBox.critical(
                 None,
-                "Live GPT",
+                "LiveAI",
                 tr("No system tray is available on this desktop."),
             )
             return 1
