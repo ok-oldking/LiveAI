@@ -2,12 +2,48 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from live_gpt.config import Config, DEFAULT_CONFIG
-from live_gpt.localization import resolve_language
+from live_gpt.localization import resolve_language, system_uses_simplified_chinese
 
 
 class ConfigTests(unittest.TestCase):
+    def test_pypi_default_follows_system_display_language(self) -> None:
+        for languages, region, expected in (
+            (["zh-Hans-CN", "en-US"], "en_US", "ali"),
+            (["zh_CN"], "en_US", "ali"),
+            (["zh-SG"], "en_US", "ali"),
+            (["zh-Hant-TW", "zh-Hans-CN"], "zh_CN", "default"),
+            (["zh-HK"], "zh_CN", "default"),
+            (["en-US", "zh-Hans-CN"], "zh_CN", "default"),
+            ([], "zh_CN", "ali"),
+            ([], "en_US", "default"),
+        ):
+            with self.subTest(languages=languages, region=region), tempfile.TemporaryDirectory() as directory, patch(
+                "live_gpt.localization.QLocale.system",
+                return_value=SimpleNamespace(uiLanguages=lambda: languages, name=lambda: region),
+            ):
+                path = Path(directory) / "config.json"
+                for loaded in (None, {"language": "en"}, {"pypi_mirror": "invalid"}):
+                    if loaded is not None:
+                        path.write_text(json.dumps(loaded), encoding="utf-8")
+                    config = Config(path)
+                    self.assertEqual(config["pypi_mirror"], expected)
+                    self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["pypi_mirror"], expected)
+
+    def test_saved_pypi_choices_survive_system_language_changes(self) -> None:
+        for system_language in ("zh-Hans-CN", "en-US"):
+            for mirror in ("default", "ali", "sjtug"):
+                with self.subTest(system_language=system_language, mirror=mirror), tempfile.TemporaryDirectory() as directory, patch(
+                    "live_gpt.localization.QLocale.system",
+                    return_value=SimpleNamespace(uiLanguages=lambda: [system_language]),
+                ):
+                    path = Path(directory) / "config.json"
+                    path.write_text(json.dumps({"pypi_mirror": mirror}), encoding="utf-8")
+                    self.assertEqual(Config(path)["pypi_mirror"], mirror)
+
     def test_sovits_gpu_index_defaults_to_zero_and_rejects_cpu_values(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
@@ -122,7 +158,8 @@ class ConfigTests(unittest.TestCase):
 
             config = Config(path)
 
-            expected = {**DEFAULT_CONFIG, "language": resolve_language()}
+            expected = {**DEFAULT_CONFIG, "language": resolve_language(),
+                        "pypi_mirror": "ali" if system_uses_simplified_chinese() else "default"}
             self.assertEqual(dict(config), expected)
             self.assertEqual(
                 json.loads(path.read_text(encoding="utf-8")),
@@ -148,7 +185,8 @@ class ConfigTests(unittest.TestCase):
 
             config = Config(path)
 
-            expected = {**DEFAULT_CONFIG, "language": resolve_language()}
+            expected = {**DEFAULT_CONFIG, "language": resolve_language(),
+                        "pypi_mirror": "ali" if system_uses_simplified_chinese() else "default"}
             self.assertEqual(dict(config), expected)
             self.assertEqual(
                 json.loads(path.read_text(encoding="utf-8")),
@@ -257,10 +295,10 @@ class ConfigTests(unittest.TestCase):
 
             config = Config(path)
 
-            self.assertEqual(config["pypi_mirror"], "default")
+            self.assertEqual(config["pypi_mirror"], config.get_default("pypi_mirror"))
             self.assertEqual(
                 json.loads(path.read_text(encoding="utf-8"))["pypi_mirror"],
-                "default",
+                config.get_default("pypi_mirror"),
             )
 
 
