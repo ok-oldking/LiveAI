@@ -1,0 +1,161 @@
+name: Windows Release
+run-name: Windows release · ${{ inputs.tag || github.ref_name }}
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag, for example v0.1.0'
+        required: true
+        type: string
+
+concurrency:
+  group: windows-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: '3.12'
+  PYTHONUTF8: '1'
+  PYTHONIOENCODING: 'UTF-8'
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  prepare:
+    name: Validate and synchronize update repositories
+    runs-on: windows-latest
+    timeout-minutes: 30
+    outputs:
+      changes: ${{ steps.sync.outputs.changes_with_asterisk }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+    steps:
+      - name: Configure Git
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+          git config --global user.email "ok-oldking@users.noreply.github.com"
+          git config --global user.name "ok-oldking"
+
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release tag
+        id: release
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)(?:\.\d+)?)?$') {
+            throw 'Use a version tag such as v0.1.0 or v0.1.0-beta.1.'
+          }
+          $tagCommit = git rev-parse --verify ("refs/tags/" + $env:RELEASE_TAG + "^{commit}")
+          if ($LASTEXITCODE -ne 0) { throw 'The release tag does not exist.' }
+          $headCommit = git rev-parse HEAD
+          if ($headCommit -ne $tagCommit) { throw 'The checkout does not match the release tag.' }
+          "prerelease=$($env:RELEASE_TAG.Contains('-').ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+
+      - name: Install runtime and build validation dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime dependency installation failed.' }
+          python -m pip install ".[build]"
+          if ($LASTEXITCODE -ne 0) { throw 'Build dependency installation failed.' }
+          python -m pip check
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime dependencies are inconsistent.' }
+
+      - name: Validate launcher and deployed application
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -p test_packaging.py -v
+
+      - name: Check publishing credentials
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          CNB_USERNAME: ${{ secrets.CNB_USERNAME }}
+          UPDATE_REPO_SECRET: ${{ secrets.UPDATE_REPO_SECRET }}
+        run: |
+          foreach ($secretName in @('CNB_TOKEN', 'CNB_USERNAME', 'UPDATE_REPO_SECRET')) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($secretName))) {
+              throw "Missing Actions secret: $secretName"
+            }
+          }
+
+      - name: Synchronize update repositories
+        id: sync
+        uses: ok-oldking/partial-sync-repo@c55d1e590ccab2a14669e9d5da291dde8ee282f3
+        with:
+          repos: |
+            https://${{ secrets.CNB_USERNAME }}:${{ secrets.CNB_TOKEN }}@cnb.cool/ok-oldking/live-gpt-update.git
+            https://ok-oldking:${{ secrets.UPDATE_REPO_SECRET }}@github.com/ok-oldking/live-gpt-update.git
+          sync_list: deploy.txt
+          tag: ${{ env.RELEASE_TAG }}
+          gitignore_file: .update_repo_gitignore
+          show_author: true
+
+  package:
+    name: Build unsigned installers and publish
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Configure Git
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build with pyappify
+        uses: ok-oldking/pyappify-action@c5cc8fe5c9bd5c732969018694a2645474c48b7e
+        with:
+          version: v1.2.3
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveAI-${{ env.RELEASE_TAG }}
+          path: pyappify_dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+          fail_on_unmatched_files: true
+          files: pyappify_dist/*
+          body: |
+            ${{ needs.prepare.outputs.changes }}
+
+            ### Downloads
+            - **LiveAI-win32-China-setup.exe**: full installer; updates from CNB and installs dependencies from Aliyun.
+            - **LiveAI-win32-Global-setup.exe**: full installer; updates from GitHub and installs dependencies from PyPI.
+            - **LiveAI-win32-online-setup.exe**: small installer; downloads Python and dependencies during setup.
+            - **LiveAI-win32.zip**: portable launcher; downloads Python and dependencies on first setup.
+
+            Installers and the launcher are unsigned.

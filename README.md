@@ -3,10 +3,59 @@ voice and share screen chat with your web chatbot, free of tokens
 
 ## Run
 
+For packaged Windows releases, use the China or Global installer from the
+[releases page](https://github.com/ok-oldking/live-gpt/releases). China uses
+[CNB](https://cnb.cool/ok-oldking/live-gpt-update) for app updates and Aliyun for
+Python packages; Global uses
+[GitHub](https://github.com/ok-oldking/live-gpt-update) and PyPI. The pyappify
+launcher manages Python 3.12, dependencies, and app updates. Full installers
+include the Python runtime and the default pet; optional voice models are
+downloaded through LiveAI's settings. The online installer and portable
+launcher download the runtime and dependencies during initial setup.
+
+To run from source:
+
 ```powershell
 .\.venv\Scripts\Activate.ps1
 LiveAI
 ```
+
+## Build Windows releases
+
+The [Windows Release workflow](.github/workflows/build.yml) follows the
+pyappify build used in `ok-wuthering-waves`. It validates the deployed app,
+syncs the runtime files listed in `deploy.txt` to both update repositories,
+then builds unsigned China and Global installers, an online installer, and a
+portable launcher. The launcher profiles are configured in `pyappify.yml`.
+Runtime dependencies, including transitive dependencies, are pinned in
+`requirements.txt`; source updates run directly from `src`.
+
+Configure these Actions secrets in the **live-gpt source repository**:
+
+| Secret | Purpose |
+| --- | --- |
+| `CNB_USERNAME` | CNB Git HTTPS username with access to the update repository. |
+| `CNB_TOKEN` | CNB token with permission to push branches and tags to `ok-oldking/live-gpt-update`. |
+| `UPDATE_REPO_SECRET` | GitHub token with permission to push branches and tags to `ok-oldking/live-gpt-update`. |
+
+Push a version tag such as `v0.1.0` to build and publish a release. Prerelease
+tags such as `v0.1.0-beta.1` publish prereleases. You can also run the workflow
+manually with an existing tag. Artifacts are uploaded to the workflow and to
+the corresponding GitHub release. No code signing or signing credentials are
+used. Launcher and installer icons come from `icons/`.
+
+To validate the release package locally:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install ".[build]"
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_packaging.py -v
+```
+
+After changing runtime dependencies in `pyproject.toml`, update the pinned
+runtime dependencies in `requirements.txt` and rerun this validation.
+
+## Using LiveAI
 
 The app starts as a translucent, always-on-top overlay centered above the
 bottom of the screen and also places an icon in the Windows system tray. Drag
