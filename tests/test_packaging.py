@@ -113,7 +113,7 @@ print(json.dumps({'source': str(Path(app.__file__).resolve())}))
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             payload = json.loads(result.stdout.strip().splitlines()[-1])
-            self.assertEqual(Path(payload["source"]), staged / "src/live_gpt/app.py")
+            self.assertTrue(Path(payload["source"]).samefile(staged / "src/live_gpt/app.py"))
 
 
 if __name__ == "__main__":
