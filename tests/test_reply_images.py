@@ -28,6 +28,12 @@ class ReplyImageTests(unittest.TestCase):
         buffer.open(QIODevice.OpenModeFlag.WriteOnly)
         cls.image.save(buffer, "PNG")
         cls.png = bytes(buffer.data())
+        cls.next_image = QImage(80, 160, QImage.Format.Format_RGB32)
+        cls.next_image.fill(QColor("red"))
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        cls.next_image.save(buffer, "PNG")
+        cls.next_png = bytes(buffer.data())
         cls.gate = threading.Event()
         cls.requests = []
 
@@ -41,9 +47,10 @@ class ReplyImageTests(unittest.TestCase):
                     return
                 self.send_response(200)
                 self.send_header("Content-Type", "image/png")
-                self.send_header("Content-Length", str(len(cls.png)))
+                data = cls.next_png if self.path == "/slow-next" else cls.png
+                self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                self.wfile.write(cls.png)
+                self.wfile.write(data)
 
             def log_message(self, *_args):
                 pass
@@ -258,6 +265,29 @@ class ReplyImageTests(unittest.TestCase):
         resource = self.display.document().resource(QTextDocument.ResourceType.ImageResource, QUrl("live-gpt-image:0"))
         self.assertEqual(resource.size(), other.size())
         self.assertEqual(resource.pixelColor(0, 0), QColor("red"))
+
+    def test_new_remote_reply_loads_its_thumbnail_without_opening_viewer(self):
+        first = self.base + "/image"
+        self.display.setHtml(f'<img src="{first}">')
+        self.wait_for(lambda: first in self.display._image_loader.cache)
+        first_name = self.image_fragment().charFormat().toImageFormat().name()
+        resource = self.display.document().resource(QTextDocument.ResourceType.ImageResource, QUrl(first_name))
+        self.assertEqual(resource.pixelColor(0, 0), QColor("#2980b9"))
+
+        self.gate.clear()
+        self.addCleanup(self.gate.set)
+        second = self.base + "/slow-next"
+        self.display.setHtml(f'<img src="{second}">')
+        second_name = self.image_fragment().charFormat().toImageFormat().name()
+        resource = self.display.document().resource(QTextDocument.ResourceType.ImageResource, QUrl(second_name))
+        self.assertNotEqual(resource.pixelColor(0, 0), QColor("#2980b9"))
+        self.assertIn(second, self.display._image_loader.pending)
+        self.gate.set()
+        self.wait_for(lambda: second in self.display._image_loader.cache)
+        resource = self.display.document().resource(QTextDocument.ResourceType.ImageResource, QUrl(second_name))
+        self.assertEqual(resource.size(), self.next_image.size())
+        self.assertEqual(resource.pixelColor(0, 0), QColor("red"))
+        self.assertIsNone(self.display._image_preview)
 
     def test_preview_keeps_overlay_reply_expanded_when_pointer_leaves(self):
         window = OverlayWindow()

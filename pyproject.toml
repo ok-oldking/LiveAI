@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 build = ["PyYAML==6.0.3", "packaging>=24,<27"]
+docs = ["mkdocs-material>=9.5,<10"]
 
 [project.gui-scripts]
 LiveAI = "live_gpt.app:main"

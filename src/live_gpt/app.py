@@ -2975,6 +2975,13 @@ class ReplyDisplay(QTextBrowser):
         images.feed(formatted)
         images.close()
         self._images = images.images
+        # Qt retains resources added by asynchronous downloads across setHtml.
+        # Positional image names can now refer to a different reply's source.
+        # Replace them before layout can reuse an old thumbnail and skip loading.
+        for name in self._images:
+            url = QUrl(name)
+            resource_type = QTextDocument.ResourceType.ImageResource
+            self.document().addResource(resource_type, url, self.loadResource(resource_type, url))
         super().setHtml("".join(images.parts))
         self._resize_images()
         while len(self._copy_buttons) > len(self._code_blocks):

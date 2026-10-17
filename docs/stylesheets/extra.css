@@ -1,0 +1,26 @@
+.language-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.md-typeset .language-card {
+  display: block;
+  padding: 1.5rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.5rem;
+  color: var(--md-typeset-color);
+  font-weight: 600;
+  text-align: center;
+}
+
+.md-typeset .language-card:hover,
+.md-typeset .language-card:focus-visible {
+  border-color: var(--md-accent-fg-color);
+  color: var(--md-accent-fg-color);
+}
+
+.md-typeset img {
+  height: auto;
+}
