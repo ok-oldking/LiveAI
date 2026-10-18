@@ -15,6 +15,10 @@ LiveAI 通过 Playwright 使用你已登录的 ChatGPT 浏览器会话，无需 
 [快速开始](#快速开始) · [使用指南](#使用指南) ·
 [常见问题](#常见问题) · [文档站点配置](docs/README.md)
 
+![LiveAI 应用截图：深色桌面悬浮窗，包含 ChatGPT 标签页与截图来源选择、消息输入框、麦克风、附带截图发送按钮和桌宠。](docs/images/liveai-app-screenshot.png)
+
+*LiveAI 桌面悬浮窗。*
+
 ![LiveAI 使用流程：连接已登录的 ChatGPT 标签页，按住右 Alt 说话并附带截图，发送问题，再收听回复并查看滚动字幕。右 Ctrl 仅发送语音识别后的文字，不附带截图。](docs/images/liveai-workflow-zh-CN.png)
 
 *使用流程示意：连接 → 语音与截图 → 发送 → 收听与阅读。*
