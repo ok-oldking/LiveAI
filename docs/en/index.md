@@ -17,6 +17,10 @@ context is shared as screenshots attached to individual messages.
 [Getting started](#getting-started) · [Usage](#usage) ·
 [Troubleshooting](#troubleshooting) · [Development](#development)
 
+![How LiveAI works: connect your signed-in ChatGPT tab, hold Right Alt to speak with a screenshot, send your question, then hear the reply with rolling subtitles. Right Ctrl sends voice input without a screenshot.](../images/liveai-workflow-en.png)
+
+*Workflow illustration: connect → speak and capture → send → hear and read.*
+
 ## Features
 
 - **Voice input:** hold a global shortcut to dictate and send, or use the overlay

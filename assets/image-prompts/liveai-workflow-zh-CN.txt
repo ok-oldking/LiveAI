@@ -1,0 +1,23 @@
+Generated with the built-in image_gen tool.
+Source image: docs/images/liveai-workflow-en.png
+
+Use case: text-localization.
+Asset type: Simplified Chinese version of the supplied LiveAI README workflow illustration.
+Input image 1: edit target, the existing English LiveAI workflow.
+Primary request: translate the English labels and sample messages into clear Simplified Chinese while preserving the same four-panel horizontal composition, dimensions, indigo palette, soft shadows, illustrated browser windows, microphone, screenshot, arrows, desktop overlay, and small white desktop pet. This is a localized sibling image, not a redesign.
+Text replacements (render exactly, use a crisp modern Chinese sans-serif font at a comfortable readable size):
+"How LiveAI works" -> "LiveAI 使用流程"
+"Voice, screenshots, and replies — on your desktop" -> "在桌面上提问、分享截图、收听回复"
+Panel 1: keep the numbered circle "1", heading "连接 ChatGPT", subtitle "使用已登录的 ChatGPT 标签页".
+"Connected" -> "已连接".
+"Explore GPTs" -> "探索 GPT"
+"Library" -> "资料库"
+Panel 2: keep circle "2", heading "语音与截图", subtitle "按住右 Alt，说话并附带截图".
+Key label "Right Alt" -> "右 Alt".
+Panel 3: keep circle "3", heading "发送问题", subtitle "发送文字，可附带截图".
+"What should I do next?" -> "我接下来该怎么做？"
+Panel 4: keep circle "4", heading "收听与阅读", subtitle "语音播放回复，同步显示滚动字幕".
+"Here is the next step." -> "下一步可以这样做。"
+Footer: "右 Ctrl：仅语音输入，不附图  •  无需 API 密钥"
+Keep product names "LiveAI" and "ChatGPT" unchanged everywhere.
+Constraints: Simplified Chinese, accurate characters, all text clean and legible, no clipping or accidental extra English. Keep the English source's design and all illustration objects intact, change only localized text and text spacing as needed. Preserve opaque pale background. No new features, no continuous screen-sharing implication, no API integration implication. Right Alt dictates and sends with a screenshot; Right Ctrl dictates and sends without a screenshot. Preserve numbered circles 1 through 4 and the directional flow.

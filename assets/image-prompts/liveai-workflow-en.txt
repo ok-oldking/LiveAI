@@ -1,0 +1,24 @@
+Generated with the built-in image_gen tool.
+
+Use case: infographic-diagram.
+Asset type: polished English workflow illustration for the LiveAI open-source GitHub README, wide landscape composition, approximately 16:9, large readable typography at README width.
+Primary request: illustrate how LiveAI lets a Windows user talk to ChatGPT and share screenshots from a desktop overlay while continuing to work.
+Style: refined editorial software illustration, crisp rounded UI cards, soft dimensional shadows, restrained indigo accents consistent with the project's indigo documentation theme, pale neutral background, high contrast dark text, generous spacing. Professional and approachable. Schematic interfaces rather than a claimed real screenshot.
+Composition: title at top, four numbered panels flowing left to right with clear connecting arrows. Each panel combines a simple illustrated app scene with a large step heading and one brief subtitle. Keep the illustrations dominant and text concise.
+Exact English text:
+Title: "How LiveAI works"
+Subtitle below title: "Voice, screenshots, and replies — on your desktop"
+Panel 1 heading: "1. Connect"
+Panel 1 subtitle: "Use your signed-in ChatGPT tab"
+Panel 1 illustration: a browser window labeled "ChatGPT", a connection line to a small translucent desktop overlay labeled "LiveAI", with a checkmark indicating connected.
+Panel 2 heading: "2. Speak + capture"
+Panel 2 subtitle: "Hold Right Alt to ask with a screenshot"
+Panel 2 illustration: microphone, an application window with a screenshot selection frame, and a keyboard key labeled "Right Alt". A screenshot is a still image.
+Panel 3 heading: "3. Send to ChatGPT"
+Panel 3 subtitle: "Your question + optional screenshot"
+Panel 3 illustration: a browser chat composer containing a small still-image attachment and the short question "What should I do next?", plus a send arrow.
+Panel 4 heading: "4. Hear + read"
+Panel 4 subtitle: "Spoken replies with rolling subtitles"
+Panel 4 illustration: same compact translucent LiveAI overlay with a speaker icon, two clean subtitle lines, and a small friendly animated-pet-style desktop companion beside it. The reply shown in overlay is "Here is the next step."
+Footer: "Right Ctrl: voice only   •   No API key required"
+Constraints: all text English, accurate spelling, legible and uncropped. Preserve correct product names LiveAI and ChatGPT. The app reuses an existing signed-in browser session; do not imply API integration, continuous screen streaming, video calls, autonomous computer control, or account limits bypass. Right Alt sends dictated input with a screenshot; Right Ctrl sends dictated text without a screenshot. No fake certification badges, no watermarks, no decorative nonsense text, no extra claims.
