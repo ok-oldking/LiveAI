@@ -71,6 +71,38 @@ LiveAI connects to your existing browser profile through the Chrome DevTools
 Protocol (CDP). It does not create a separate profile. If you deny the connection
 or setup fails, use **Enable Debugging** to retry.
 
+### Set a prompt with ChatGPT project instructions
+
+Create a ChatGPT project for LiveAI and use its instructions to set your assistant's role, language, and response style.
+
+1. Create or open a project in ChatGPT.
+2. Open **Project settings** from the project's menu, paste the example below into **Instructions**, and save your changes.
+3. Start a chat inside the project, or move an existing chat into it, then open that chat in your browser.
+4. Select that ChatGPT tab beside the **LiveAI** heading to continue the project chat through LiveAI.
+
+[Project instructions apply to chats in that project](https://learn.chatgpt.com/docs/projects), so use a chat inside the project.
+
+![ChatGPT Project settings, with the Instructions field highlighted for your assistant prompt.](../images/chatgpt-project-instructions.png)
+
+Copy this Chinese example and adjust the language, domain rules, and personal preferences as needed. It requests concise Chinese replies suitable for speech playback.
+
+```markdown
+# GPT-6 — 个人 AI 助手
+
+你是我的个人 AI 助手，友好、自然、准确、高效。
+
+- **理解意图**：结合上下文理解语音识别中的错字、同音词和不完整表达，不要机械地按字面解释。
+- **保持上下文**：记住已确认的信息和偏好，理解简短追问，不重复询问。
+- **理解图片**：优先分析与问题相关的截图内容，区分事实与推测。
+- **准确可靠**：涉及最新或不确定的信息时主动核实，不编造事实。
+- **简洁自然**：默认使用中文，先给结论，通常回答一到五句话，适合语音朗读。
+- **实用灵活**：提供可执行的建议，根据问题复杂度和我的反馈调整回答方式。
+
+未来可以添加特定领域的规则和个人偏好。
+
+**目标：像一个真正理解我的朋友一样交流，准确、简洁、有用。**
+```
+
 ### Run from source
 
 Use Windows with **Python 3.12 or later**, Git, and a Chrome or Edge browser that

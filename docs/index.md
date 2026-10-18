@@ -17,7 +17,8 @@ LiveAI 将语音输入、窗口截图、语音回复和动态桌宠整合到 Win
 
 1. 从 [GitHub Releases](https://github.com/ok-oldking/live-gpt/releases) 下载 Windows 安装包。
 2. 打开 Chrome 或 Edge，登录 ChatGPT，然后启动 LiveAI 并允许浏览器调试连接。
-3. 选择 ChatGPT 标签页和截图来源，按住 **右 Alt** 听写并附图发送，或按住 **右 Ctrl** 只发送文字。
+3. 建议[设置 ChatGPT 项目提示词](zh-CN/index.md#设置-chatgpt-项目提示词)，在项目内打开聊天，让助手按你的偏好回复。
+4. 选择 ChatGPT 标签页和截图来源，按住 **右 Alt** 听写并附图发送，或按住 **右 Ctrl** 只发送文字。
 
 悬浮窗麦克风按钮用于先听写、再手动确认发送。详细说明见[听写与发送](zh-CN/index.md#听写与发送)。
 
