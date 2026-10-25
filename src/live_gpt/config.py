@@ -42,6 +42,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "sovits_ref_audio_path": "",
     "sovits_prompt_text": "",
     "sovits_prompt_lang": "auto",
+    "sovits_seed": -1,
 }
 
 
@@ -78,6 +79,8 @@ def _valid_value(key: str, value: Any, default: Any) -> bool:
         return 2 <= value <= 10
     if key == "sovits_gpu_index":
         return value >= 0
+    if key == "sovits_seed":
+        return -1 <= value <= 2_147_483_647
     if key == "version":
         return value == DEFAULT_CONFIG["version"]
     if key == "language":

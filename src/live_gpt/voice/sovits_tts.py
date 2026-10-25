@@ -43,6 +43,7 @@ class SovitsTtsProvider:
         self.prompt_lang = "auto"
         self.ref_audio_path = ""
         self.text_lang = "auto"
+        self.seed = -1
         self._server_voice: tuple[str, str, str, str] | None = None
         self._weights = ("", "")
         self._server_weights: tuple[str, str] | None = None
@@ -77,10 +78,12 @@ class SovitsTtsProvider:
 
     def configure(self, prompt_text: str = "", prompt_lang: str = "auto",
                   ckpt_path: str = "", pth_path: str = "", gpu_index: int = 0,
-                  ref_audio_path: str = "", text_lang: str = "auto") -> None:
+                  ref_audio_path: str = "", text_lang: str = "auto", seed: int = -1) -> None:
         weights = self.validate_weights(ckpt_path, pth_path)
         if type(gpu_index) is not int or gpu_index < 0:
             raise ValueError("Choose a valid NVIDIA GPU index (0 or greater)")
+        self._validate_seed(seed)
+        self.seed = seed
         self.gpu_index = gpu_index
         self.prompt_text = prompt_text.strip()
         self.prompt_lang = prompt_lang.lower()
@@ -88,6 +91,11 @@ class SovitsTtsProvider:
         self.text_lang = text_lang.lower()
         # Update the pair together without blocking the UI on server warmup.
         self._weights = weights
+
+    @staticmethod
+    def _validate_seed(seed: int) -> None:
+        if type(seed) is not int or not -1 <= seed <= 2_147_483_647:
+            raise ValueError("Seed must be -1 (random) or an integer from 0 to 2147483647")
 
     @property
     def ckpt_path(self) -> str:
@@ -323,7 +331,7 @@ class SovitsTtsProvider:
 
     def synthesize_stream(
         self, model_key: str, text: str, speaker: str, language: str = "auto",
-        *, cancel_event: threading.Event | None = None,
+        *, cancel_event: threading.Event | None = None, seed: int | None = None,
     ) -> Iterable[tuple[Any, int, str]]:
         import numpy as np
 
@@ -331,6 +339,8 @@ class SovitsTtsProvider:
             raise ValueError("Text is required for GPT-SoVITS playback")
         if language not in SOVITS_LANGUAGES:
             raise ValueError(f"Unsupported GPT-SoVITS language {language!r}")
+        request_seed = self.seed if seed is None else seed
+        self._validate_seed(request_seed)
         self._ensure_server(model_key, speaker=speaker, language=language)
         if cancel_event is not None and cancel_event.is_set():
             return
@@ -344,6 +354,7 @@ class SovitsTtsProvider:
                 "prompt_lang": self.prompt_lang,
                 "text_split_method": "cut5",
                 "fragment_interval": 0.15,
+                "seed": request_seed,
             }
         ).encode()
         request = urllib.request.Request(

@@ -11,9 +11,9 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QCoreApplication, QLocale
+from PySide6.QtCore import QCoreApplication, QDir, QLocale
 from PySide6.QtGui import QAction, QPalette
-from PySide6.QtWidgets import QApplication, QMenu
+from PySide6.QtWidgets import QApplication, QFileDialog, QFileSystemModel, QMenu
 
 from live_gpt.app import HotkeyConfigDialog, OverlayWindow
 from live_gpt.config import Config
@@ -154,6 +154,9 @@ class LocalizationTests(unittest.TestCase):
                 self.assertEqual(overlay.capture_source_combo.currentData(), window)
                 self.assertEqual(overlay.capture_source_combo.currentText(), "Settings")
                 self.assertEqual(dialog.hold_microphone_edit.keySequence(), "Right Alt")
+                self.assertEqual(dialog.sovits_seed_spin.specialValueText(), "每次随机" if language == "zh" else "Random each time")
+                self.assertEqual(dialog.voice_regenerate_button.text(), "重新生成" if language == "zh" else "Regenerate")
+                self.assertEqual(dialog.voice_keep_seed_button.text(), "保留此种子" if language == "zh" else "Keep this seed")
                 self.assertEqual(dialog.stt_test_result.text(), "untranslated transcript")
                 self.assertEqual(dialog.voice_test_text.text(), "User's playback text")
                 self.assertEqual(dialog.stt_model(), "zh_zipformer_ctc_int8_2025_07_03")
@@ -177,6 +180,40 @@ class LocalizationTests(unittest.TestCase):
             overlay.close()
             menu.close()
             del binding
+
+    def test_model_picker_shows_matching_files_in_both_languages(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = {"pth": root / "语音_e2_s396.pth", "ckpt": root / "语音-e15.ckpt"}
+            for model in models.values():
+                model.touch()
+            (root / "reference.wav").touch()
+
+            for language in ("en", "zh"):
+                settings = HotkeyConfigDialog("Right Alt", language=language)
+                try:
+                    for extension, model in models.items():
+                        with self.subTest(language=language, extension=extension):
+                            def choose_file(_parent, _caption, _start, name_filter):
+                                picker = QFileDialog()
+                                picker.setOption(QFileDialog.Option.DontUseNativeDialog)
+                                try:
+                                    picker.setNameFilter(name_filter)
+                                    file_model = picker.findChild(QFileSystemModel)
+                                    self.assertIsNotNone(file_model)
+                                    # Exercise Qt's filter parser against real files, without a modal dialog.
+                                    folder = QDir(directory)
+                                    folder.setNameFilters(file_model.nameFilters())
+                                    self.assertEqual(folder.entryList(QDir.Filter.Files), [model.name])
+                                    return str(model), picker.selectedNameFilter()
+                                finally:
+                                    picker.close()
+
+                            with patch("live_gpt.app.QFileDialog.getOpenFileName", side_effect=choose_file):
+                                settings._browse_sovits_weight(extension)
+                            self.assertEqual(getattr(settings, f"sovits_{extension}_edit").text(), str(model))
+                finally:
+                    settings.close()
 
     def test_native_qt_buttons_follow_language(self) -> None:
         localization.set_language("zh")

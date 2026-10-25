@@ -252,6 +252,14 @@ is required for this backend; CPU fallback is disabled.
 4. Optionally select both a GPT `.ckpt` file and a SoVITS `.pth` file. Leave both
    blank to use the installation's configured models; incomplete pairs are invalid.
 5. Use **Play text** to test the voice.
+6. Select **Regenerate** to preview a new seed. When you like a result, select
+   **Keep this seed** to reuse it for subsequent speech playback.
+
+**Generation seed** defaults to **Random each time**, or you can enter a fixed
+number. Regenerating affects only the preview; the new seed is saved when you
+select **Keep this seed**. Reference audio has a stronger influence on voice and
+emotion. A fixed seed makes the same text more repeatable, but cannot guarantee
+identical delivery for different text.
 
 LiveAI copies its speech server into the selected installation and starts it with
 the embedded Python runtime. Startup includes model warmup and a silent synthesis;

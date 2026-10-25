@@ -1,6 +1,13 @@
 """Simplified Chinese interface catalog (English source → translation)."""
 
 TRANSLATIONS = {
+    "Generation seed": "生成种子",
+    "Random each time": "每次随机",
+    "Regenerate": "重新生成",
+    "Keep this seed": "保留此种子",
+    "Preview seed: {seed}": "试听种子：{seed}",
+    "Saved seed: {seed}": "已保存种子：{seed}",
+    "Reference audio sets the voice and emotion. A fixed seed reduces variation; different text can still sound different.": "参考音频决定音色和情感。固定种子可减少随机变化，但不同文本的语气仍可能不同。",
     "NVIDIA GPU": "NVIDIA 显卡",
     "NVIDIA GPU 0 (first GPU)": "NVIDIA 显卡 0（第一块显卡）",
     "NVIDIA GPU {index} (unavailable)": "NVIDIA 显卡 {index}（不可用）",
@@ -194,7 +201,8 @@ TRANSLATIONS = {
     "Select Check to validate the runtime and selected playback model.": "点击“检查”验证运行环境和所选播放模型。",
     "Choose GPT-SoVITS installation": "选择 GPT-SoVITS 安装目录",
     "Choose .{extension} model": "选择 .{extension} 模型",
-    "Model files (*.{extension})": "模型文件（*.{extension}）",
+    # Qt requires ASCII parentheses to extract the wildcard pattern.
+    "Model files (*.{extension})": "模型文件 (*.{extension})",
     "Choose GPT-SoVITS reference audio": "选择 GPT-SoVITS 参考音频",
     "Audio files (*.wav *.flac *.mp3);;All files (*)": "音频文件 (*.wav *.flac *.mp3);;所有文件 (*)",
     "Both paths are optional. Leave both blank to use the installation’s configured models.": "两个路径均可选。全部留空时使用安装目录中配置的模型。",

@@ -10,6 +10,20 @@ from live_gpt.localization import resolve_language, system_uses_simplified_chine
 
 
 class ConfigTests(unittest.TestCase):
+    def test_sovits_seed_defaults_to_random_and_saves_valid_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text('{"version": 1}', encoding="utf-8")
+            config = Config(path)
+            self.assertEqual(config["sovits_seed"], -1)
+            for seed in (0, 42, 2_147_483_647, -1):
+                config["sovits_seed"] = seed
+                self.assertEqual(Config(path)["sovits_seed"], seed)
+            for invalid in (-2, 2_147_483_648, True, "42", 1.5):
+                with self.subTest(invalid=invalid):
+                    config["sovits_seed"] = invalid
+                    self.assertEqual(Config(path)["sovits_seed"], -1)
+
     def test_pypi_default_follows_system_display_language(self) -> None:
         for languages, region, expected in (
             (["zh-Hans-CN", "en-US"], "en_US", "ali"),

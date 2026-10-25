@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import queue
 import re
+import secrets
 import sys
 import threading
 import time
@@ -264,6 +265,7 @@ class _LocalSpeechThread(QThread):
         text: str,
         speaker: str = "",
         language: str = "auto",
+        *, seed: int | None = None,
     ) -> None:
         super().__init__()
         self.manager = manager
@@ -271,6 +273,7 @@ class _LocalSpeechThread(QThread):
         self.text = text
         self.speaker = speaker
         self.language = language
+        self.seed = seed
         self._cancel_event = threading.Event()
 
     def request_stop(self) -> None:
@@ -348,6 +351,8 @@ class _LocalSpeechThread(QThread):
                     {"cancel_event": self._cancel_event}
                     if isinstance(self.manager, SovitsTtsProvider) else {}
                 )
+                if self.seed is not None and isinstance(self.manager, SovitsTtsProvider):
+                    options["seed"] = self.seed
                 for chunk in stream_synthesis(
                     self.tts_model,
                     self.text,
@@ -827,6 +832,7 @@ class HotkeyConfigDialog(QDialog):
         sovits_ref_audio_path: str = "",
         sovits_prompt_text: str = "",
         sovits_prompt_lang: str = "auto",
+        sovits_seed: int = -1,
         config: Config | None = None,
         stt_manager: SherpaSttProvider | None = None,
         sovits_manager: SovitsTtsProvider | None = None,
@@ -841,6 +847,8 @@ class HotkeyConfigDialog(QDialog):
         self._voice_worker: _VoiceOperationThread | None = None
         self._voice_record_thread: _LocalDictationThread | None = None
         self._voice_play_thread: _LocalSpeechThread | None = None
+        self._preview_seed: int | None = None
+        self._preview_succeeded = False
         self._voice_status_checked = {"stt": False, "tts": False}
         self._voice_operation_type = "stt"
         self._voice_operation_action = ""
@@ -1419,6 +1427,21 @@ class HotkeyConfigDialog(QDialog):
         sovits_output_language_row.addWidget(self.sovits_text_lang_combo, 1)
         playing_local_layout.addLayout(sovits_output_language_row)
 
+        self.sovits_seed_spin = QSpinBox()
+        self.sovits_seed_spin.setAccessibleName(tr("Generation seed"))
+        self.sovits_seed_spin.setStyleSheet("QSpinBox { color: #f5f7ff; background: #18213b; padding: 8px; border: 1px solid #536080; border-radius: 6px; }")
+        self.sovits_seed_spin.setRange(-1, 2_147_483_647)
+        self.sovits_seed_spin.setSpecialValueText(tr("Random each time"))
+        self.sovits_seed_spin.setValue(sovits_seed)
+        seed_row = QHBoxLayout()
+        seed_row.addWidget(QLabel(tr("Generation seed")))
+        seed_row.addWidget(self.sovits_seed_spin, 1)
+        playing_local_layout.addLayout(seed_row)
+        seed_help = QLabel(tr("Reference audio sets the voice and emotion. A fixed seed reduces variation; different text can still sound different."))
+        seed_help.setObjectName("settingsNote")
+        seed_help.setWordWrap(True)
+        playing_local_layout.addWidget(seed_help)
+
         self.voice_test_text = QLineEdit()
         self.voice_test_text.setObjectName("voiceTestText")
         self.voice_test_text.setPlaceholderText(tr("Text to synthesize"))
@@ -1427,9 +1450,19 @@ class HotkeyConfigDialog(QDialog):
         self.voice_play_button = QPushButton(tr("Play text"))
         self.voice_play_button.setObjectName("voiceActionButton")
         tts_action_row.addWidget(self.voice_play_button)
+        self.voice_regenerate_button = QPushButton(tr("Regenerate"))
+        self.voice_regenerate_button.setObjectName("voiceActionButton")
+        tts_action_row.addWidget(self.voice_regenerate_button)
+        self.voice_keep_seed_button = QPushButton(tr("Keep this seed"))
+        self.voice_keep_seed_button.setObjectName("voiceActionButton")
+        self.voice_keep_seed_button.setEnabled(False)
+        tts_action_row.addWidget(self.voice_keep_seed_button)
         tts_action_row.addStretch()
         playing_local_layout.addWidget(self.voice_test_text)
         playing_local_layout.addLayout(tts_action_row)
+        self.voice_preview_seed_label = QLabel()
+        self.voice_preview_seed_label.setObjectName("settingsNote")
+        playing_local_layout.addWidget(self.voice_preview_seed_label)
         self.playing_progress = QProgressBar()
         self.playing_progress.setObjectName("voiceProgress")
         self.playing_progress.setRange(0, 100)
@@ -1533,6 +1566,15 @@ class HotkeyConfigDialog(QDialog):
         )
         self.voice_record_button.clicked.connect(self._toggle_voice_record_test)
         self.voice_play_button.clicked.connect(self._start_voice_play_test)
+        self.voice_regenerate_button.clicked.connect(lambda: self._start_voice_play_test(regenerate=True))
+        self.voice_keep_seed_button.clicked.connect(self._keep_voice_seed)
+        self.voice_test_text.textChanged.connect(self._invalidate_voice_preview)
+        for edit in (self.sovits_installation_edit, self.sovits_ckpt_edit,
+                     self.sovits_pth_edit, self.sovits_ref_audio_edit, self.sovits_prompt_text_edit):
+            edit.textChanged.connect(self._invalidate_voice_preview)
+        for combo in (self.sovits_text_lang_combo, self.sovits_prompt_lang_combo, self.sovits_gpu_combo):
+            combo.currentIndexChanged.connect(self._invalidate_voice_preview)
+        self.sovits_seed_spin.valueChanged.connect(self._invalidate_voice_preview)
         self._stt_model_changed()
         self._sync_recording_controls()
         self._sync_playing_controls()
@@ -1832,6 +1874,7 @@ class HotkeyConfigDialog(QDialog):
             self._check_voice_page_when_needed("tts")
 
     def _connect_auto_save(self) -> None:
+        self.sovits_seed_spin.valueChanged.connect(lambda value: self._save_setting("sovits_seed", value))
         self.subtitle_rows_spin.valueChanged.connect(self._save_subtitle_rows)
         self.capture_cursor_checkbox.toggled.connect(
             lambda enabled: self._save_setting("capture_cursor", enabled)
@@ -2200,11 +2243,13 @@ class HotkeyConfigDialog(QDialog):
             self.sovits_weights_status.setText(tr("{error} Changes are not saved.", error=translate_message(str(error))))
             self.playing_check_button.setEnabled(False)
             self.voice_play_button.setEnabled(False)
+            self.voice_regenerate_button.setEnabled(False)
             return
         self.sovits_weights_status.setText(tr("Both paths are optional. Leave both blank to use the installation’s configured models."))
         busy = self._voice_worker is not None or self._voice_test_running()
         self.playing_check_button.setEnabled(not busy)
         self.voice_play_button.setEnabled(not busy)
+        self.voice_regenerate_button.setEnabled(not busy)
         if self.config is not None:
             self.config.update(sovits_ckpt_path=self.sovits_ckpt_path(), sovits_pth_path=self.sovits_pth_path())
 
@@ -2237,6 +2282,7 @@ class HotkeyConfigDialog(QDialog):
             gpu_index=self.sovits_gpu_index(),
             ref_audio_path=self.sovits_ref_audio_path(),
             text_lang=self.sovits_text_lang(),
+            seed=self.sovits_seed_spin.value(),
         )
         self.sovits_manager.model_status("tts", self.sovits_installation())
         return self.sovits_manager
@@ -2416,6 +2462,7 @@ class HotkeyConfigDialog(QDialog):
             self.stt_download_button,
             self.voice_record_button,
             self.voice_play_button,
+            self.voice_regenerate_button,
             self.close_button,
         ):
             button.setEnabled(not busy)
@@ -2431,6 +2478,8 @@ class HotkeyConfigDialog(QDialog):
         self.sovits_ref_audio_edit.setEnabled(not busy)
         self.sovits_prompt_text_edit.setEnabled(not busy)
         self.sovits_prompt_lang_combo.setEnabled(not busy)
+        self.sovits_seed_spin.setEnabled(not busy)
+        self.voice_keep_seed_button.setEnabled(not busy and self._preview_succeeded)
         for widget in self.sovits_weight_widgets:
             widget.setEnabled(not busy)
         if not busy:
@@ -2503,7 +2552,19 @@ class HotkeyConfigDialog(QDialog):
         if worker is not None:
             worker.deleteLater()
 
-    def _start_voice_play_test(self) -> None:
+    def _invalidate_voice_preview(self, *_args) -> None:
+        self._preview_succeeded = False
+        self.voice_keep_seed_button.setEnabled(False)
+        self.voice_preview_seed_label.clear()
+
+    def _keep_voice_seed(self) -> None:
+        if not self._preview_succeeded or self._preview_seed is None or self._voice_test_running():
+            return
+        seed = self._preview_seed
+        self.sovits_seed_spin.setValue(seed)
+        self.voice_preview_seed_label.setText(tr("Saved seed: {seed}", seed=seed))
+
+    def _start_voice_play_test(self, _checked: bool = False, *, regenerate: bool = False) -> None:
         if self._voice_worker is not None or self._voice_test_running():
             return
         try:
@@ -2515,6 +2576,16 @@ class HotkeyConfigDialog(QDialog):
         if not text:
             text = "Hello from GPT-SoVITS."
             self.voice_test_text.setText(text)
+        saved_seed = self.sovits_seed_spin.value()
+        previous_seed = self._preview_seed
+        if regenerate or saved_seed == -1:
+            self._preview_seed = secrets.randbelow(2_147_483_648)
+            while self._preview_seed in (previous_seed, saved_seed):
+                self._preview_seed = secrets.randbelow(2_147_483_648)
+        else:
+            self._preview_seed = saved_seed
+        self._preview_succeeded = False
+        self.voice_preview_seed_label.setText(tr("Preview seed: {seed}", seed=self._preview_seed))
         self._set_voice_busy(True)
         self.playing_progress.show()
         self.playing_progress.setRange(0, 0)
@@ -2527,6 +2598,7 @@ class HotkeyConfigDialog(QDialog):
             text,
             self.sovits_ref_audio_path(),
             self.sovits_text_lang(),
+            seed=self._preview_seed,
         )
         self._voice_play_thread = worker
         worker.started.connect(lambda message: self.playing_status.setText(translate_message(message)))
@@ -2535,6 +2607,7 @@ class HotkeyConfigDialog(QDialog):
         worker.start()
 
     def _voice_play_completed(self, success: bool, message: str) -> None:
+        self._preview_succeeded = success and self._preview_seed is not None
         if not success:
             logger.error(f"Voice playback test failed: {message}")
         self.playing_status.setProperty("error", not success)
@@ -5365,6 +5438,7 @@ class TrayController:
                 sovits_ref_audio_path=str(self.config["sovits_ref_audio_path"]),
                 sovits_prompt_text=str(self.config["sovits_prompt_text"]),
                 sovits_prompt_lang=str(self.config["sovits_prompt_lang"]),
+                sovits_seed=int(self.config.get("sovits_seed", -1)),
                 config=self.config,
                 stt_manager=self.stt_manager,
                 sovits_manager=self.sovits_manager,
@@ -5452,6 +5526,7 @@ class TrayController:
                 gpu_index=int(self.config.get("sovits_gpu_index", 0)),
                 ref_audio_path=str(self.config["sovits_ref_audio_path"]),
                 text_lang=str(self.config["sovits_text_lang"]),
+                seed=int(self.config.get("sovits_seed", -1)),
             )
         except ValueError as error:
             logger.warning(f"GPT-SoVITS playback configuration is invalid: {error}")

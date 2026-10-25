@@ -188,6 +188,7 @@ class UiTranslations(QObject):
                 self._property(widget, "placeholderText")
             if isinstance(widget, QSpinBox):
                 self._property(widget, "suffix")
+                self._property(widget, "specialValueText")
             if isinstance(widget, QComboBox):
                 blocked = widget.blockSignals(True)
                 for index in range(widget.count()):

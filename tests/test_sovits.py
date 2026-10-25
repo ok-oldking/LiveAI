@@ -403,7 +403,7 @@ class SovitsTtsProviderTests(unittest.TestCase):
         )
         captured = {}
         provider = SovitsTtsProvider()
-        provider.configure("reference words", "en")
+        provider.configure("reference words", "en", seed=42)
         provider._port = 12345
 
         def urlopen(request, timeout=0):
@@ -425,6 +425,28 @@ class SovitsTtsProviderTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["prompt_text"], "reference words")
         self.assertEqual(captured["payload"]["prompt_lang"], "en")
         self.assertEqual(captured["payload"]["text_lang"], "en")
+        self.assertEqual(captured["payload"]["seed"], 42)
+
+        with (
+            patch.object(provider, "_ensure_server"),
+            patch("urllib.request.urlopen", side_effect=urlopen),
+        ):
+            list(provider.synthesize_stream("model", "hello", "voice.wav", "en", seed=123))
+            self.assertEqual(captured["payload"]["seed"], 123)
+            self.assertEqual(provider.seed, 42, "Preview seed must not replace the saved playback seed")
+            list(provider.synthesize_stream("model", "hello", "voice.wav", "en"))
+            self.assertEqual(captured["payload"]["seed"], 42)
+
+    def test_invalid_seed_is_rejected_before_starting_server(self):
+        provider = SovitsTtsProvider()
+        for seed in (-2, True, 2_147_483_648, "42"):
+            with self.subTest(seed=seed):
+                with self.assertRaisesRegex(ValueError, "Seed must be"):
+                    provider.configure(seed=seed)
+                with patch.object(provider, "_ensure_server") as start:
+                    with self.assertRaisesRegex(ValueError, "Seed must be"):
+                        list(provider.synthesize_stream("model", "test", "voice.wav", seed=seed))
+                    start.assert_not_called()
 
 
 if __name__ == "__main__":

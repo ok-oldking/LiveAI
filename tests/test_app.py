@@ -8,7 +8,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -38,6 +38,24 @@ from live_gpt.screen_capture import CaptureSource  # noqa: E402
 
 
 class LocalSpeechThreadTests(unittest.TestCase):
+    def test_preview_seed_reaches_sovits_without_changing_saved_seed(self):
+        import numpy as np
+        from live_gpt.voice.sovits_tts import SovitsTtsProvider
+
+        provider = SovitsTtsProvider()
+        provider.configure(seed=101)
+        worker = _LocalSpeechThread(provider, "model", "test", seed=202)
+        completed = []
+        worker.completed.connect(lambda success, _message: completed.append(success))
+        with (
+            patch.object(provider, "synthesize_stream", return_value=iter([(np.ones(24), 24000, "")])) as synthesize,
+            patch.dict("sys.modules", {"sounddevice": MagicMock()}),
+        ):
+            worker.run()
+        self.assertEqual(synthesize.call_args.kwargs["seed"], 202)
+        self.assertEqual(provider.seed, 101)
+        self.assertEqual(completed, [True])
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.application = QApplication.instance() or QApplication([])
@@ -1042,6 +1060,56 @@ class ReplyDisplayTests(unittest.TestCase):
 
 
 class SettingsDialogTests(unittest.TestCase):
+    def test_regenerate_preview_only_saves_seed_when_kept(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Config(Path(directory) / "config.json")
+            dialog = HotkeyConfigDialog("Right Alt", config=config, language="en")
+            try:
+                self.assertFalse(dialog.voice_keep_seed_button.isEnabled())
+                with (
+                    patch("live_gpt.app.secrets.randbelow", side_effect=[101, 202, 303]),
+                    patch("live_gpt.app._LocalSpeechThread") as speech,
+                ):
+                    dialog.voice_play_button.click()
+                    self.assertEqual(speech.call_args.kwargs["seed"], 101)
+                    self.assertFalse(dialog.voice_regenerate_button.isEnabled())
+                    self.assertEqual(config["sovits_seed"], -1)
+                    dialog._voice_play_completed(True, "Generated")
+                    dialog._voice_play_finished()
+                    dialog.voice_keep_seed_button.click()
+                    self.assertEqual(Config(config.path)["sovits_seed"], 101)
+                    self.assertEqual(dialog._voice_provider("tts").seed, 101)
+
+                    dialog.voice_regenerate_button.click()
+                    self.assertEqual(speech.call_args.kwargs["seed"], 202)
+                    self.assertEqual(config["sovits_seed"], 101)
+                    dialog._voice_play_completed(False, "Synthesis failed")
+                    dialog._voice_play_finished()
+                    self.assertFalse(dialog.voice_keep_seed_button.isEnabled())
+                    dialog._keep_voice_seed()
+                    self.assertEqual(config["sovits_seed"], 101)
+
+                    dialog.voice_regenerate_button.click()
+                    self.assertEqual(speech.call_args.kwargs["seed"], 303)
+                    dialog._voice_play_completed(True, "Generated")
+                    dialog._voice_play_finished()
+                    dialog.voice_test_text.setText("Changed text")
+                    self.assertFalse(dialog.voice_keep_seed_button.isEnabled())
+                    dialog._keep_voice_seed()
+                    self.assertEqual(config["sovits_seed"], 101)
+
+                    dialog.voice_play_button.click()
+                    self.assertEqual(speech.call_args.kwargs["seed"], 101)
+                    dialog._voice_play_completed(True, "Generated")
+                    dialog._voice_play_finished()
+            finally:
+                dialog.close()
+            reopened = HotkeyConfigDialog("Right Alt", sovits_seed=Config(config.path)["sovits_seed"])
+            try:
+                self.assertEqual(reopened.sovits_seed_spin.value(), 101)
+            finally:
+                reopened.close()
+
     def test_sovits_gpu_selector_defaults_to_first_gpu_and_saves_choice(self):
         with tempfile.TemporaryDirectory() as directory, patch(
             "live_gpt.app.SovitsTtsProvider.nvidia_gpus", return_value=[(0, "NVIDIA First"), (1, "NVIDIA Second")],
@@ -1634,6 +1702,9 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.sovits_manager.preload.assert_called_once_with(
             "test-model"
         )
+        controller.config["sovits_seed"] = 123
+        controller._local_tts_configuration()
+        self.assertEqual(controller.sovits_manager.configure.call_args.kwargs["seed"], 123)
 
     def test_invalid_sovits_runtime_is_not_preloaded_or_locked(self) -> None:
         controller = TrayController.__new__(TrayController)
