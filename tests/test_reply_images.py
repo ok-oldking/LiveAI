@@ -14,7 +14,8 @@ from PySide6.QtGui import QColor, QImage, QTextCursor, QTextDocument, QWheelEven
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from live_gpt.app import OverlayWindow, ReplyDisplay
+from live_gpt.ui.overlay import OverlayWindow
+from live_gpt.ui.widgets import ReplyDisplay
 from live_gpt.reply_images import ReplyImageMarkup
 
 
@@ -92,7 +93,7 @@ class ReplyImageTests(unittest.TestCase):
             block = block.next()
         self.fail("Image was not rendered")
 
-    @patch("live_gpt.app.webbrowser.open_new_tab")
+    @patch("live_gpt.ui.widgets.webbrowser.open_new_tab")
     def test_remote_thumbnail_loads_and_click_opens_original_in_resizable_window(self, open_tab):
         source = self.base + "/image"
         self.display.setHtml(f'<p>Before</p><p><img src="{source}" alt="Stormwind"></p><p>After</p>')

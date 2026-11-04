@@ -15,7 +15,8 @@ from PySide6.QtCore import QCoreApplication, QDir, QLocale
 from PySide6.QtGui import QAction, QPalette
 from PySide6.QtWidgets import QApplication, QFileDialog, QFileSystemModel, QMenu
 
-from live_gpt.app import HotkeyConfigDialog, OverlayWindow
+from live_gpt.ui.overlay import OverlayWindow
+from live_gpt.ui.settings_dialog import HotkeyConfigDialog
 from live_gpt.config import Config
 from live_gpt.localization import UiTranslations, localization, resolve_language, translate_message, tr
 from live_gpt.screen_capture import CaptureSource
@@ -209,7 +210,7 @@ class LocalizationTests(unittest.TestCase):
                                 finally:
                                     picker.close()
 
-                            with patch("live_gpt.app.QFileDialog.getOpenFileName", side_effect=choose_file):
+                            with patch("live_gpt.ui.settings_dialog.QFileDialog.getOpenFileName", side_effect=choose_file):
                                 settings._browse_sovits_weight(extension)
                             self.assertEqual(getattr(settings, f"sovits_{extension}_edit").text(), str(model))
                 finally:

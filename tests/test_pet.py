@@ -14,8 +14,10 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
-from live_gpt.app import OverlayWindow, TrayController, _QueuedLocalSpeechThread
-from live_gpt.app import HotkeyConfigDialog
+from live_gpt.controller import TrayController
+from live_gpt.ui.overlay import OverlayWindow
+from live_gpt.voice.workers import _QueuedLocalSpeechThread
+from live_gpt.ui.settings_dialog import HotkeyConfigDialog
 from live_gpt.config import Config
 from PySide6.QtGui import QKeySequence
 
@@ -73,7 +75,7 @@ class PetTests(unittest.TestCase):
         w = self.window
         w.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
         outside = w._pointer_hover_bounds().topLeft() - QPoint(100, 100)
-        with patch("live_gpt.app.QCursor.pos", return_value=outside):
+        with patch("live_gpt.ui.overlay.QCursor.pos", return_value=outside):
             w._track_pointer(outside)
             self.assertFalse(w._chrome_visible)
             w.begin_dictation_waiting()
@@ -114,7 +116,7 @@ class PetTests(unittest.TestCase):
         w = self.window
         w.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
         outside = w._pointer_hover_bounds().topLeft() - QPoint(100, 100)
-        with patch("live_gpt.app.QCursor.pos", return_value=outside):
+        with patch("live_gpt.ui.overlay.QCursor.pos", return_value=outside):
             w.begin_response_display("Hello")
             for action in (lambda: None, lambda: w.begin_reading("Playing")):
                 action()
@@ -143,7 +145,7 @@ class PetTests(unittest.TestCase):
         w = self.window
         w.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
         outside = w._pointer_hover_bounds().topLeft() - QPoint(100, 100)
-        with patch("live_gpt.app.QCursor.pos", return_value=outside):
+        with patch("live_gpt.ui.overlay.QCursor.pos", return_value=outside):
             for auto_hide in (False, True):
                 with self.subTest(auto_hide=auto_hide):
                     w.auto_hide_button.setChecked(auto_hide)
@@ -388,7 +390,7 @@ class PetTests(unittest.TestCase):
     def test_hover_fits_editable_content_and_restores_compact_geometry(self):
         w = self.window
         outside = QPoint(-10000, -10000)
-        with patch("live_gpt.app.QCursor.pos", return_value=outside):
+        with patch("live_gpt.ui.overlay.QCursor.pos", return_value=outside):
             w._track_pointer(outside)
             base = QRect(w.geometry())
             w.set_transcript("\n".join(f"Line {i}" for i in range(20)))

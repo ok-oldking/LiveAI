@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from live_gpt.app import HotkeyConfigDialog
+from live_gpt.ui.settings_dialog import HotkeyConfigDialog
 from live_gpt.config import Config
 from live_gpt.pet import available_pets, default_pet_path
 from live_gpt.pet_download import download_pet, pet_source

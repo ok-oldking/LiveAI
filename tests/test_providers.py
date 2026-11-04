@@ -130,7 +130,7 @@ class MonitorRoutingTests(unittest.TestCase):
 
 class ControllerVoiceFallbackTests(unittest.TestCase):
     def controller(self, tab_provider: str, **config):
-        from live_gpt.app import TrayController
+        from live_gpt.controller import TrayController
 
         controller = TrayController.__new__(TrayController)
         controller.config = {

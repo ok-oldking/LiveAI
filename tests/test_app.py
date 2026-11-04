@@ -24,14 +24,11 @@ from PySide6.QtWidgets import (  # noqa: E402
     QSystemTrayIcon,
 )
 
-from live_gpt.app import (  # noqa: E402
-    HotkeyConfigDialog,
-    OverlayWindow,
-    TranscriptEditor,
-    TrayController,
-    _LocalSpeechThread,
-    _QueuedLocalSpeechThread,
-)
+from live_gpt.controller import TrayController  # noqa: E402
+from live_gpt.ui.overlay import OverlayWindow  # noqa: E402
+from live_gpt.ui.settings_dialog import HotkeyConfigDialog  # noqa: E402
+from live_gpt.ui.widgets import TranscriptEditor  # noqa: E402
+from live_gpt.voice.workers import _LocalSpeechThread, _QueuedLocalSpeechThread  # noqa: E402
 from live_gpt.config import Config  # noqa: E402
 from live_gpt.localization import resolve_language  # noqa: E402
 from live_gpt.screen_capture import CaptureSource  # noqa: E402
@@ -853,7 +850,7 @@ class TranscriptEditorTests(unittest.TestCase):
         QTest.keyClick(self.editor, Qt.Key.Key_Backspace)
         self.assertEqual(self.editor.toPlainText(), "")
 
-    @patch("live_gpt.app.QDesktopServices.openUrl")
+    @patch("live_gpt.ui.widgets.QDesktopServices.openUrl")
     def test_plain_and_named_response_links_open_browser(self, open_url) -> None:
         for text, links, url in (
             ("https://example.com", (), "https://example.com"),
@@ -908,7 +905,7 @@ class ReplyDisplayTests(unittest.TestCase):
         self.assertTrue(self.window.transcript_area.isHidden())
         self.assertTrue(self.window.reply_close_button.isVisible())
 
-    @patch("live_gpt.app.webbrowser.open_new_tab")
+    @patch("live_gpt.ui.widgets.webbrowser.open_new_tab")
     def test_reply_link_opens_new_tab_and_keeps_reply_visible(self, open_tab) -> None:
         display = self.window.subtitle_full_text
         cursor = display.document().find("docs")
@@ -977,7 +974,7 @@ class ReplyDisplayTests(unittest.TestCase):
         self.assertNotIn("example.com/docs", self.window.subtitle_full_text.toHtml())
         self.assertNotIn("example.com/source", self.window.subtitle_full_text.toHtml())
 
-    @patch("live_gpt.app.webbrowser.open_new_tab")
+    @patch("live_gpt.ui.widgets.webbrowser.open_new_tab")
     def test_collected_sources_are_visible_clickable_and_not_in_subtitles(self, open_tab) -> None:
         display = self.window.subtitle_full_text
         reply_text = self.window._reading_full_text
@@ -1069,8 +1066,8 @@ class SettingsDialogTests(unittest.TestCase):
             try:
                 self.assertFalse(dialog.voice_keep_seed_button.isEnabled())
                 with (
-                    patch("live_gpt.app.secrets.randbelow", side_effect=[101, 202, 303]),
-                    patch("live_gpt.app._LocalSpeechThread") as speech,
+                    patch("live_gpt.ui.settings_dialog.secrets.randbelow", side_effect=[101, 202, 303]),
+                    patch("live_gpt.ui.settings_dialog._LocalSpeechThread") as speech,
                 ):
                     dialog.voice_play_button.click()
                     self.assertEqual(speech.call_args.kwargs["seed"], 101)
@@ -1114,7 +1111,7 @@ class SettingsDialogTests(unittest.TestCase):
 
     def test_sovits_gpu_selector_defaults_to_first_gpu_and_saves_choice(self):
         with tempfile.TemporaryDirectory() as directory, patch(
-            "live_gpt.app.SovitsTtsProvider.nvidia_gpus", return_value=[(0, "NVIDIA First"), (1, "NVIDIA Second")],
+            "live_gpt.ui.settings_dialog.SovitsTtsProvider.nvidia_gpus", return_value=[(0, "NVIDIA First"), (1, "NVIDIA Second")],
         ):
             config = Config(Path(directory) / "config.json")
             dialog = HotkeyConfigDialog("Right Alt", playing_backend="sovits", config=config)
@@ -1202,7 +1199,7 @@ class SettingsDialogTests(unittest.TestCase):
                 dialog._voice_play_thread.wait(3000)
             dialog.close()
 
-    @patch("live_gpt.app.QCursor.pos", return_value=QPoint(-10000, -10000))
+    @patch("live_gpt.ui.overlay.QCursor.pos", return_value=QPoint(-10000, -10000))
     def test_subtitle_rows_save_and_apply_immediately(self, _cursor):
         with tempfile.TemporaryDirectory() as directory:
             config = Config(Path(directory) / "config.json")
@@ -1259,7 +1256,7 @@ class SettingsDialogTests(unittest.TestCase):
                 self.assertFalse(dialog.voice_play_button.isEnabled())
                 self.assertFalse(dialog.playing_check_button.isEnabled())
                 self.assertEqual(config["sovits_ckpt_path"], "")
-                with patch("live_gpt.app._LocalSpeechThread") as worker:
+                with patch("live_gpt.ui.settings_dialog._LocalSpeechThread") as worker:
                     dialog._start_voice_play_test()
                     worker.assert_not_called()
                 dialog.sovits_pth_edit.setText(str(pth))
@@ -1555,7 +1552,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller._local_speech_thread = Mock()
         controller._local_speech_thread.wait.return_value = False
 
-        with patch("live_gpt.app.QTimer") as timer:
+        with patch("live_gpt.controller.QTimer") as timer:
             controller._exit_application()
             controller.browser_monitor.request_stop.assert_called_once_with()
             controller._local_dictation_thread.stop_recording.assert_called_once_with(cancel=True)
@@ -1874,7 +1871,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         finally:
             window.close()
 
-    @patch("live_gpt.app.capture_webp", return_value=b"screenshot")
+    @patch("live_gpt.controller.capture_webp", return_value=b"screenshot")
     def test_send_captures_selected_source(self, capture: Mock) -> None:
         source = CaptureSource(
             key="window:123",
@@ -1960,7 +1957,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         finally:
             window.close()
 
-    @patch("live_gpt.app.QCursor.pos", return_value=QPoint(-10000, -10000))
+    @patch("live_gpt.ui.overlay.QCursor.pos", return_value=QPoint(-10000, -10000))
     def test_subtitle_rows_fit_tall_overlay_and_survive_hover_and_lock(self, _cursor):
         window = OverlayWindow()
         try:
@@ -1996,7 +1993,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         finally:
             window.close()
 
-    @patch("live_gpt.app.QCursor.pos", return_value=QPoint(-10000, -10000))
+    @patch("live_gpt.ui.overlay.QCursor.pos", return_value=QPoint(-10000, -10000))
     def test_playback_displays_configured_rows_and_clears_rows_at_end(self, _cursor):
         window = OverlayWindow()
         try:
@@ -2015,7 +2012,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         finally:
             window.close()
 
-    @patch("live_gpt.app.QCursor.pos", return_value=QPoint(-10000, -10000))
+    @patch("live_gpt.ui.overlay.QCursor.pos", return_value=QPoint(-10000, -10000))
     def test_subtitle_hover_expands_and_mouse_leave_collapses(self, _cursor) -> None:
         window = OverlayWindow()
         try:
@@ -2061,7 +2058,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             self.assertEqual(window.height(), expected_height)
 
             with patch(
-                "live_gpt.app.QCursor.pos",
+                "live_gpt.ui.overlay.QCursor.pos",
                 return_value=QPoint(-10_000, -10_000),
             ):
                 window._collapse_subtitle_if_outside()
@@ -2076,7 +2073,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         finally:
             window.close()
 
-    @patch("live_gpt.app.QCursor.pos", return_value=QPoint(-10000, -10000))
+    @patch("live_gpt.ui.overlay.QCursor.pos", return_value=QPoint(-10000, -10000))
     def test_dragged_subtitle_keeps_new_position_after_update_and_collapse(self, _cursor) -> None:
         window = OverlayWindow()
         try:
@@ -2126,7 +2123,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
                 window.subtitle_panel.mapFromGlobal(options_position)
             ))
             with patch(
-                "live_gpt.app.QCursor.pos",
+                "live_gpt.ui.overlay.QCursor.pos",
                 return_value=options_position,
             ):
                 window._subtitle_outside_timer.timeout.emit()
@@ -2135,7 +2132,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             self.assertTrue(window._subtitle_outside_timer.isActive())
 
             with patch(
-                "live_gpt.app.QCursor.pos",
+                "live_gpt.ui.overlay.QCursor.pos",
                 return_value=QPoint(-10_000, -10_000),
             ):
                 window._subtitle_outside_timer.timeout.emit()
@@ -2147,7 +2144,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         finally:
             window.close()
 
-    @patch("live_gpt.app.QCursor.pos", return_value=QPoint(-10000, -10000))
+    @patch("live_gpt.ui.overlay.QCursor.pos", return_value=QPoint(-10000, -10000))
     def test_tall_response_stays_expanded_at_bottom_left_hover_margin(self, cursor) -> None:
         window = OverlayWindow()
         try:
@@ -2390,7 +2387,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             )
 
             with patch(
-                "live_gpt.app.QCursor.pos",
+                "live_gpt.ui.overlay.QCursor.pos",
                 return_value=QPoint(-10_000, -10_000),
             ):
                 current_lines = (
@@ -2874,7 +2871,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         finally:
             window.close()
 
-    @patch("live_gpt.app.QCursor.pos", return_value=QPoint(-10000, -10000))
+    @patch("live_gpt.ui.overlay.QCursor.pos", return_value=QPoint(-10000, -10000))
     def test_auto_hide_reveals_for_activity_and_hides_afterwards(self, _cursor) -> None:
         window = OverlayWindow()
         try:
@@ -3084,7 +3081,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             finishing=False,
         )
 
-    @patch("live_gpt.app.capture_webp", return_value=b"hold-screenshot")
+    @patch("live_gpt.controller.capture_webp", return_value=b"hold-screenshot")
     def test_screenshot_is_queued_with_browser_dictation_after_half_second_hold(
         self,
         capture: Mock,
@@ -3152,8 +3149,8 @@ class TrayControllerBrowserTests(unittest.TestCase):
             preserve_attachments=True,
         )
 
-    @patch("live_gpt.app.QTimer.singleShot")
-    @patch("live_gpt.app.capture_webp", return_value=b"screenshot")
+    @patch("live_gpt.controller.QTimer.singleShot")
+    @patch("live_gpt.controller.capture_webp", return_value=b"screenshot")
     def test_browser_microphone_waits_for_capture_and_cancelled_hold_starts_nothing(
         self, capture: Mock, single_shot: Mock,
     ) -> None:
@@ -3195,8 +3192,8 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.browser_monitor.request_replace_attachment.assert_not_called()
         self.assertEqual(controller._dictation_attachment_tab_id, "selected-tab")
 
-    @patch("live_gpt.app.QTimer.singleShot")
-    @patch("live_gpt.app.capture_webp", side_effect=RuntimeError("Capture unavailable"))
+    @patch("live_gpt.controller.QTimer.singleShot")
+    @patch("live_gpt.controller.capture_webp", side_effect=RuntimeError("Capture unavailable"))
     def test_capture_failure_returns_to_idle_without_starting_browser_dictation(
         self, capture: Mock, single_shot: Mock,
     ) -> None:
@@ -3217,8 +3214,8 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.window.end_dictation_display.assert_called_once_with()
         self.assertEqual(controller._dictation_state, "idle")
 
-    @patch("live_gpt.app.QTimer.singleShot")
-    @patch("live_gpt.app.capture_webp")
+    @patch("live_gpt.controller.QTimer.singleShot")
+    @patch("live_gpt.controller.capture_webp")
     def test_browser_dictation_without_screenshot_starts_immediately(
         self, capture: Mock, single_shot: Mock,
     ) -> None:
@@ -3237,7 +3234,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         single_shot.assert_not_called()
         self.assertIsNone(controller._pending_dictation_capture.screenshot)
 
-    @patch("live_gpt.app.capture_webp", return_value=b"screenshot")
+    @patch("live_gpt.controller.capture_webp", return_value=b"screenshot")
     def test_local_recording_still_uploads_screenshot_while_listening(self, capture: Mock) -> None:
         controller = TrayController.__new__(TrayController)
         controller.window = Mock()
@@ -3322,7 +3319,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         self.assertIsNone(controller._local_speech_thread)
         self.assertEqual(controller._local_voice_longest_text, "")
 
-    @patch("live_gpt.app.capture_webp")
+    @patch("live_gpt.controller.capture_webp")
     def test_record_without_screenshot_hotkey_never_captures(
         self,
         capture: Mock,
@@ -3341,7 +3338,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         capture.assert_not_called()
         self.assertIsNone(controller._pending_dictation_capture.source)
 
-    @patch("live_gpt.app.capture_webp")
+    @patch("live_gpt.controller.capture_webp")
     def test_cancelled_hold_does_not_upload_a_screenshot(self, capture: Mock) -> None:
         controller = TrayController.__new__(TrayController)
         controller.window = Mock()
@@ -3638,7 +3635,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             controller.show_window.assert_called_once_with()
             controller.window.reveal_controls.assert_called_once_with()
 
-    @patch("live_gpt.app.QCursor.pos", return_value=QPoint(-10000, -10000))
+    @patch("live_gpt.ui.overlay.QCursor.pos", return_value=QPoint(-10000, -10000))
     def test_tray_reveal_recovers_offscreen_window_and_survives_pointer_ticks(self, _cursor) -> None:
         window = OverlayWindow()
         controller = TrayController.__new__(TrayController)
@@ -3651,8 +3648,8 @@ class TrayControllerBrowserTests(unittest.TestCase):
             window.setGeometry(3246, 1808, 1619, 306)
             window.auto_hide_button.setChecked(True)
             window.hide()
-            with patch("live_gpt.app.QApplication.screens", return_value=[screen]), \
-                    patch("live_gpt.app.QApplication.primaryScreen", return_value=screen):
+            with patch("live_gpt.ui.overlay.QApplication.screens", return_value=[screen]), \
+                    patch("live_gpt.ui.overlay.QApplication.primaryScreen", return_value=screen):
                 controller._handle_activation(QSystemTrayIcon.ActivationReason.Trigger)
             self.assertFalse(window.isHidden())
             self.assertFalse(window.auto_hide_enabled)
@@ -3676,8 +3673,8 @@ class TrayControllerBrowserTests(unittest.TestCase):
             window.setGeometry(3246, 1808, 1619, 900)
             window.lock_button.setChecked(True)
             window._input_collapsed_geometry = QRect(3246, 1808, 1619, 306)
-            with patch("live_gpt.app.QApplication.screens", return_value=[screen]), \
-                    patch("live_gpt.app.QApplication.primaryScreen", return_value=screen):
+            with patch("live_gpt.ui.overlay.QApplication.screens", return_value=[screen]), \
+                    patch("live_gpt.ui.overlay.QApplication.primaryScreen", return_value=screen):
                 window.ensure_on_screen()
             self.assertTrue(bounds.contains(window.geometry()))
             self.assertTrue(window._position_locked)
@@ -3695,8 +3692,8 @@ class TrayControllerBrowserTests(unittest.TestCase):
         try:
             expected = QRect(-1700, 700, 1140, 240)
             window.setGeometry(expected)
-            with patch("live_gpt.app.QApplication.screens", return_value=[primary, secondary]), \
-                    patch("live_gpt.app.QApplication.primaryScreen", return_value=primary):
+            with patch("live_gpt.ui.overlay.QApplication.screens", return_value=[primary, secondary]), \
+                    patch("live_gpt.ui.overlay.QApplication.primaryScreen", return_value=primary):
                 window.ensure_on_screen()
             self.assertEqual(window.geometry(), expected)
         finally:
@@ -3730,8 +3727,8 @@ class TrayControllerBrowserTests(unittest.TestCase):
         self.assertIsNone(controller.dictation_tab_id)
         self.assertIsNone(controller._pending_dictation_capture)
 
-    @patch("live_gpt.app.open_remote_debugging_settings")
-    @patch("live_gpt.app.discover_cdp_endpoint")
+    @patch("live_gpt.controller.open_remote_debugging_settings")
+    @patch("live_gpt.controller.discover_cdp_endpoint")
     def test_live_endpoint_retries_without_opening_settings(
         self,
         discover_endpoint: Mock,
