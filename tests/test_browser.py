@@ -299,7 +299,7 @@ class BrowserMonitorTests(unittest.TestCase):
             "paused": False, "ended": False,
         }
         state = _MonitorState(active_reading=_ActiveReading(
-            page=page, full_text="中" * 140, subtitles=(), started_at=0,
+            page=page, full_text="中" * 140, started_at=0,
         ))
         updates = []
         monitor.reading_changed.connect(updates.append)
@@ -325,7 +325,7 @@ class BrowserMonitorTests(unittest.TestCase):
         }
         page.evaluate.return_value = media
         state = _MonitorState(active_reading=_ActiveReading(
-            page=page, full_text="word " * 76, subtitles=(), started_at=0,
+            page=page, full_text="word " * 76, started_at=0,
         ))
         updates = []
         monitor.reading_changed.connect(updates.append)
@@ -352,7 +352,7 @@ class BrowserMonitorTests(unittest.TestCase):
         }
         page.evaluate.return_value = media
         state = _MonitorState(active_reading=_ActiveReading(
-            page=page, full_text="word " * 76, subtitles=(),
+            page=page, full_text="word " * 76,
         ))
         updates = []
         monitor.reading_changed.connect(updates.append)
@@ -375,7 +375,7 @@ class BrowserMonitorTests(unittest.TestCase):
         }
         page.evaluate.return_value = media
         state = _MonitorState(active_reading=_ActiveReading(
-            page=page, full_text="word " * 76, subtitles=(), started_at=0,
+            page=page, full_text="word " * 76, started_at=0,
         ))
         updates = []
         monitor.reading_changed.connect(updates.append)
@@ -465,7 +465,7 @@ class BrowserMonitorTests(unittest.TestCase):
         monitor = BrowserMonitor()
         page = Mock()
         page.evaluate.return_value = {"playCount": 0, "paused": True, "ended": True, "currentTime": 0, "duration": 100}
-        reading = _ActiveReading(page=page, full_text="The final answer.", subtitles=(), started_at=0)
+        reading = _ActiveReading(page=page, full_text="The final answer.", started_at=0)
         state = _MonitorState(active_reading=reading)
         updates = []
         monitor.reading_changed.connect(updates.append)
@@ -1237,7 +1237,7 @@ class BrowserMonitorTests(unittest.TestCase):
     def test_reply_close_stops_browser_audio_and_cancels_pending_reading(self) -> None:
         page = Mock()
         monitor = BrowserMonitor()
-        state = _MonitorState(active_reading=_ActiveReading(page=page, full_text="Reply", subtitles=()),
+        state = _MonitorState(active_reading=_ActiveReading(page=page, full_text="Reply"),
                               active_response=_ActiveResponse(page=page, turn_marker_before="old"))
         finished = []
         monitor.reading_finished.connect(lambda ok, text: finished.append((ok, text)))
@@ -1270,7 +1270,6 @@ class BrowserMonitorTests(unittest.TestCase):
             active_reading=_ActiveReading(
                 page=page,
                 full_text="Reply",
-                subtitles=("Reply",),
             )
         )
         results: list[tuple[bool, str]] = []
@@ -2003,7 +2002,6 @@ class BrowserMonitorTests(unittest.TestCase):
             active_reading=_ActiveReading(
                 page=page,
                 full_text="First subtitle. Second subtitle.",
-                subtitles=("First subtitle.", "Second subtitle."),
             )
         )
         subtitles: list[object] = []
@@ -2047,7 +2045,6 @@ class BrowserMonitorTests(unittest.TestCase):
             active_reading=_ActiveReading(
                 page=page,
                 full_text="The reply has not started playing yet.",
-                subtitles=("The reply has not started playing yet.",),
             )
         )
         subtitles: list[str] = []
@@ -2057,24 +2054,6 @@ class BrowserMonitorTests(unittest.TestCase):
 
         self.assertEqual(subtitles, [])
         self.assertIsNotNone(state.active_reading)
-
-    def test_subtitle_rolls_forward_one_line_at_a_time(self) -> None:
-        text = " ".join(f"word{index}" for index in range(40)) + "."
-
-        lines = BrowserMonitor._subtitle_segments(text)
-        weights = [max(len(line), 12) for line in lines]
-        first = BrowserMonitor._subtitle_at_progress(lines, 0.0)
-        after_first_line = BrowserMonitor._subtitle_at_progress(
-            lines,
-            (weights[0] + 0.1) / sum(weights),
-        )
-
-        first_lines = first.splitlines()
-        next_lines = after_first_line.splitlines()
-        self.assertGreaterEqual(len(first_lines), 2)
-        self.assertGreaterEqual(len(next_lines), 2)
-        self.assertEqual(first_lines[1], next_lines[0])
-        self.assertLessEqual(max(map(len, lines)), 54)
 
     def test_read_aloud_uses_more_actions_menu(self) -> None:
         turn = Mock()

@@ -359,7 +359,7 @@ class BrowserLocalizationTests(unittest.TestCase):
         from live_gpt.browser import _ActiveReading, _MonitorState
         monitor = BrowserMonitor()
         state = _MonitorState(active_reading=_ActiveReading(
-            page=self.page, full_text="Reply", subtitles=()))
+            page=self.page, full_text="Reply"))
         monitor.request_stop_reading(message="Playback stopped")
         monitor._stop_active_reading(state)
         self.assertTrue(self.page.evaluate("audio.paused"))

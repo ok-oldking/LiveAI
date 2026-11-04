@@ -81,6 +81,234 @@ class _PetDownloadThread(QThread):
             self.completed.emit(False, str(error))
 
 
+SETTINGS_STYLE = """
+            QDialog#settingsDialog {
+                background: transparent;
+            }
+            QFrame#settingsShell {
+                color: #f5f7ff;
+                background-color: #0c1430;
+                border: 1px solid rgba(130, 165, 230, 75);
+                border-radius: 14px;
+            }
+            QFrame#settingsTitleBar {
+                background-color: #10182e;
+                border: none;
+                border-bottom: 1px solid rgba(130, 165, 230, 45);
+                border-top-left-radius: 14px;
+                border-top-right-radius: 14px;
+            }
+            QLabel#settingsAppTitle {
+                color: #f5f7ff;
+                background: transparent;
+                font-size: 15px;
+                font-weight: 700;
+            }
+            QLabel#settingsTitleSeparator,
+            QLabel#settingsWindowTitle {
+                color: #8795b8;
+                background: transparent;
+                font-size: 14px;
+            }
+            QPushButton#settingsCloseButton {
+                background: transparent;
+                border: none;
+                border-radius: 8px;
+            }
+            QPushButton#settingsCloseButton:hover {
+                background-color: rgba(239, 68, 88, 190);
+            }
+            QWidget#settingsBody,
+            QWidget#settingsContent,
+            QWidget#settingsPage,
+            QScrollArea#settingsVoiceScroll,
+            QScrollArea#settingsVoiceScroll QWidget#qt_scrollarea_viewport,
+            QStackedWidget#settingsPages {
+                background: transparent;
+                border: none;
+            }
+            QFrame#settingsNavigation {
+                background-color: rgba(8, 14, 34, 120);
+                border: none;
+                border-right: 1px solid rgba(130, 165, 230, 45);
+                border-bottom-left-radius: 14px;
+            }
+            QLabel#settingsNavigationLabel {
+                color: #7180a4;
+                background: transparent;
+                border: none;
+                padding-left: 10px;
+                font-size: 10px;
+                font-weight: 700;
+            }
+            QPushButton#settingsNavigationButton {
+                min-height: 42px;
+                padding: 0 12px;
+                color: #cbd4ed;
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 9px;
+                text-align: left;
+                font-size: 14px;
+            }
+            QPushButton#settingsNavigationButton:hover {
+                color: #f5f7ff;
+                background-color: rgba(70, 88, 140, 80);
+            }
+            QPushButton#settingsNavigationButton:checked {
+                color: #f5f7ff;
+                background-color: rgba(38, 112, 145, 115);
+                border-color: rgba(76, 201, 240, 80);
+            }
+            QLabel#settingsPageTitle {
+                color: #f5f7ff;
+                background: transparent;
+                font-size: 24px;
+                font-weight: 700;
+            }
+            QLabel#settingsPageDescription {
+                color: #aeb9d5;
+                background: transparent;
+                font-size: 14px;
+            }
+            QFrame#settingsCard {
+                color: #f5f7ff;
+                background-color: #121c3a;
+                border: 1px solid rgba(130, 165, 230, 70);
+                border-radius: 12px;
+            }
+            QFrame#settingsCard QLabel {
+                color: #e9edff;
+                background: transparent;
+                border: none;
+            }
+            QFrame#settingsCard QCheckBox {
+                color: #f5f7ff;
+                background: transparent;
+                border: none;
+                spacing: 10px;
+                font-size: 14px;
+            }
+            QLabel#settingsCardTitle {
+                color: #f5f7ff;
+                font-size: 16px;
+                font-weight: 700;
+            }
+            QLabel#settingsNote {
+                color: #8795b8;
+                font-size: 12px;
+            }
+            QLabel#voiceFieldGroupTitle {
+                color: #dce7ff;
+                font-size: 13px;
+                font-weight: 600;
+                padding-top: 7px;
+            }
+            QKeySequenceEdit {
+                min-width: 230px;
+                background: transparent;
+                border: none;
+            }
+            QLineEdit#hotkeyEdit,
+            QKeySequenceEdit QLineEdit,
+            QComboBox#languageCombo,
+            QComboBox#voiceCombo,
+            QLineEdit#voiceTestText {
+                min-height: 34px;
+                min-width: 230px;
+                padding: 0 10px;
+                color: #f5f7ff;
+                background-color: rgba(5, 10, 28, 165);
+                border: 1px solid rgba(130, 165, 230, 85);
+                border-radius: 8px;
+                selection-background-color: rgba(76, 201, 240, 130);
+            }
+            QLineEdit#hotkeyEdit:focus,
+            QKeySequenceEdit QLineEdit:focus {
+                border-color: rgba(76, 201, 240, 190);
+            }
+            QComboBox#languageCombo QAbstractItemView,
+            QComboBox#voiceCombo QAbstractItemView {
+                color: #f5f7ff;
+                background-color: #182342;
+                border: 1px solid rgba(130, 165, 230, 85);
+                selection-background-color: rgb(38, 112, 145);
+            }
+            QScrollArea#settingsVoiceScroll QScrollBar:vertical {
+                width: 10px;
+                margin: 0;
+                background: rgba(5, 10, 28, 130);
+                border: none;
+            }
+            QScrollArea#settingsVoiceScroll QScrollBar::handle:vertical {
+                min-height: 36px;
+                background: rgba(76, 201, 240, 120);
+                border-radius: 5px;
+            }
+            QScrollArea#settingsVoiceScroll QScrollBar::add-line:vertical,
+            QScrollArea#settingsVoiceScroll QScrollBar::sub-line:vertical {
+                height: 0;
+            }
+            QPushButton#voiceActionButton {
+                min-height: 32px;
+                padding: 0 12px;
+                color: #f5f7ff;
+                background-color: rgba(38, 112, 145, 125);
+                border: 1px solid rgba(76, 201, 240, 95);
+                border-radius: 8px;
+            }
+            QPushButton#voiceActionButton:hover {
+                background-color: rgba(44, 140, 175, 170);
+            }
+            QPushButton#voiceActionButton:disabled {
+                color: #6f7893;
+                background-color: rgba(40, 50, 80, 80);
+                border-color: rgba(100, 115, 150, 45);
+            }
+            QPushButton#voiceCancelButton {
+                min-height: 32px;
+                padding: 0 12px;
+                color: #ffd8de;
+                background-color: rgba(135, 45, 65, 135);
+                border: 1px solid rgba(255, 120, 145, 105);
+                border-radius: 8px;
+            }
+            QPushButton#voiceCancelButton:hover {
+                background-color: rgba(175, 50, 75, 180);
+            }
+            QPushButton#voiceCancelButton:disabled {
+                color: #7f6670;
+                background-color: rgba(70, 38, 48, 80);
+                border-color: rgba(120, 75, 85, 45);
+            }
+            QProgressBar#voiceProgress {
+                min-height: 8px;
+                max-height: 8px;
+                color: transparent;
+                background-color: rgba(5, 10, 28, 165);
+                border: none;
+                border-radius: 4px;
+            }
+            QProgressBar#voiceProgress::chunk {
+                background-color: rgb(76, 201, 240);
+                border-radius: 4px;
+            }
+            QLabel#voiceStatus {
+                color: #9eacce;
+                font-size: 12px;
+            }
+            QLabel#voiceStatus[error="true"] {
+                color: #ff8d9b;
+            }
+            QLabel#voiceInstallLog {
+                min-height: 18px;
+                color: #7182aa;
+                font-size: 11px;
+                font-family: Consolas, "Courier New", monospace;
+            }
+            """
+
+
 class HotkeyConfigDialog(QDialog):
     """Edit LiveAI settings, including pass-through global shortcuts."""
     pet_settings_changed = Signal(str, str, int)
@@ -244,6 +472,80 @@ class HotkeyConfigDialog(QDialog):
         self.settings_pages = QStackedWidget()
         self.settings_pages.setObjectName("settingsPages")
 
+        self._build_hotkey_page()
+
+        self._build_language_page(
+            language=language,
+            config=config,
+        )
+
+        self._build_recording_page(
+            recording_backend=recording_backend,
+            stt_language=stt_language,
+            stt_model=stt_model,
+            pypi_mirror=pypi_mirror,
+        )
+
+        self._build_playing_page(
+            playing_backend=playing_backend,
+            pypi_mirror=pypi_mirror,
+            sovits_installation=sovits_installation,
+            sovits_gpu_index=sovits_gpu_index,
+            sovits_ckpt_path=sovits_ckpt_path,
+            sovits_pth_path=sovits_pth_path,
+            sovits_text_lang=sovits_text_lang,
+            sovits_ref_audio_path=sovits_ref_audio_path,
+            sovits_prompt_text=sovits_prompt_text,
+            sovits_prompt_lang=sovits_prompt_lang,
+            sovits_seed=sovits_seed,
+        )
+
+        self.recording_scroll = QScrollArea()
+        self.recording_scroll.setObjectName("settingsVoiceScroll")
+        self.recording_scroll.setWidgetResizable(True)
+        self.recording_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.recording_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.recording_scroll.setWidget(self.recording_section)
+        self.playing_scroll = QScrollArea()
+        self.playing_scroll.setObjectName("settingsVoiceScroll")
+        self.playing_scroll.setWidgetResizable(True)
+        self.playing_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.playing_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.playing_scroll.setWidget(self.playing_section)
+        self.settings_pages.addWidget(self.hotkey_section)
+        self.settings_pages.addWidget(self.language_section)
+        self.settings_pages.addWidget(self.recording_scroll)
+        self.settings_pages.addWidget(self.playing_scroll)
+        self._build_pet_page()
+        self._build_screenshots_page()
+        self._connect_signals()
+        content_layout.addWidget(self.settings_pages, 1)
+        body_layout.addWidget(content, 1)
+        shell_layout.addWidget(body, 1)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.settings_shell)
+
+        self._title_drag_widgets = (
+            self.title_bar,
+            app_title,
+            title_separator,
+            window_title,
+        )
+        for widget in self._title_drag_widgets:
+            widget.installEventFilter(self)
+
+        self.setStyleSheet(SETTINGS_STYLE + COMBOBOX_STYLE)
+        self._translations = UiTranslations(self)
+        localization.changed.connect(self._retranslate_models)
+
+    def _build_hotkey_page(self) -> None:
+        """Global shortcut editors."""
         self.hotkey_section = QWidget()
         self.hotkey_section.setObjectName("settingsPage")
         hotkey_page_layout = QVBoxLayout(self.hotkey_section)
@@ -290,6 +592,12 @@ class HotkeyConfigDialog(QDialog):
         hotkey_page_layout.addWidget(hotkey_card)
         hotkey_page_layout.addStretch()
 
+    def _build_language_page(
+        self,
+        language: str,
+        config: Config | None,
+    ) -> None:
+        """Interface language and default chat site."""
         self.language_section = QWidget()
         self.language_section.setObjectName("settingsPage")
         language_page_layout = QVBoxLayout(self.language_section)
@@ -359,6 +667,14 @@ class HotkeyConfigDialog(QDialog):
         language_page_layout.addWidget(site_card)
         language_page_layout.addStretch()
 
+    def _build_recording_page(
+        self,
+        recording_backend: str,
+        stt_language: str | None,
+        stt_model: str,
+        pypi_mirror: str,
+    ) -> None:
+        """Recording engine, Sherpa-ONNX setup and a recording test."""
         self.recording_section = QWidget()
         self.recording_section.setObjectName("settingsPage")
         recording_layout = QVBoxLayout(self.recording_section)
@@ -492,6 +808,21 @@ class HotkeyConfigDialog(QDialog):
         recording_layout.addWidget(self.recording_sherpa_card)
         recording_layout.addStretch()
 
+    def _build_playing_page(
+        self,
+        playing_backend: str,
+        pypi_mirror: str,
+        sovits_installation: str,
+        sovits_gpu_index: int,
+        sovits_ckpt_path: str,
+        sovits_pth_path: str,
+        sovits_text_lang: str,
+        sovits_ref_audio_path: str,
+        sovits_prompt_text: str,
+        sovits_prompt_lang: str,
+        sovits_seed: int,
+    ) -> None:
+        """Playback engine, GPT-SoVITS setup and a playback test."""
         self.playing_section = QWidget()
         self.playing_section.setObjectName("settingsPage")
         playing_layout = QVBoxLayout(self.playing_section)
@@ -787,28 +1118,8 @@ class HotkeyConfigDialog(QDialog):
         playing_layout.addWidget(self.playing_local_card)
         playing_layout.addStretch()
 
-        self.recording_scroll = QScrollArea()
-        self.recording_scroll.setObjectName("settingsVoiceScroll")
-        self.recording_scroll.setWidgetResizable(True)
-        self.recording_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.recording_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self.recording_scroll.setWidget(self.recording_section)
-        self.playing_scroll = QScrollArea()
-        self.playing_scroll.setObjectName("settingsVoiceScroll")
-        self.playing_scroll.setWidgetResizable(True)
-        self.playing_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.playing_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self.playing_scroll.setWidget(self.playing_section)
-        self.settings_pages.addWidget(self.hotkey_section)
-        self.settings_pages.addWidget(self.language_section)
-        self.settings_pages.addWidget(self.recording_scroll)
-        self.settings_pages.addWidget(self.playing_scroll)
-        self._build_pet_page()
-        self._build_screenshots_page()
+    def _connect_signals(self) -> None:
+        """Wire page navigation, voice setup and previews."""
         self.screenshots_nav_button.clicked.connect(
             lambda checked: checked and self.settings_pages.setCurrentIndex(5)
         )
@@ -884,255 +1195,7 @@ class HotkeyConfigDialog(QDialog):
         self.sovits_ckpt_edit.textChanged.connect(self._sovits_weights_changed)
         self.sovits_pth_edit.textChanged.connect(self._sovits_weights_changed)
         self._sovits_weights_changed()
-        content_layout.addWidget(self.settings_pages, 1)
-        body_layout.addWidget(content, 1)
-        shell_layout.addWidget(body, 1)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.settings_shell)
-
-        self._title_drag_widgets = (
-            self.title_bar,
-            app_title,
-            title_separator,
-            window_title,
-        )
-        for widget in self._title_drag_widgets:
-            widget.installEventFilter(self)
-
-        self.setStyleSheet(
-            """
-            QDialog#settingsDialog {
-                background: transparent;
-            }
-            QFrame#settingsShell {
-                color: #f5f7ff;
-                background-color: #0c1430;
-                border: 1px solid rgba(130, 165, 230, 75);
-                border-radius: 14px;
-            }
-            QFrame#settingsTitleBar {
-                background-color: #10182e;
-                border: none;
-                border-bottom: 1px solid rgba(130, 165, 230, 45);
-                border-top-left-radius: 14px;
-                border-top-right-radius: 14px;
-            }
-            QLabel#settingsAppTitle {
-                color: #f5f7ff;
-                background: transparent;
-                font-size: 15px;
-                font-weight: 700;
-            }
-            QLabel#settingsTitleSeparator,
-            QLabel#settingsWindowTitle {
-                color: #8795b8;
-                background: transparent;
-                font-size: 14px;
-            }
-            QPushButton#settingsCloseButton {
-                background: transparent;
-                border: none;
-                border-radius: 8px;
-            }
-            QPushButton#settingsCloseButton:hover {
-                background-color: rgba(239, 68, 88, 190);
-            }
-            QWidget#settingsBody,
-            QWidget#settingsContent,
-            QWidget#settingsPage,
-            QScrollArea#settingsVoiceScroll,
-            QScrollArea#settingsVoiceScroll QWidget#qt_scrollarea_viewport,
-            QStackedWidget#settingsPages {
-                background: transparent;
-                border: none;
-            }
-            QFrame#settingsNavigation {
-                background-color: rgba(8, 14, 34, 120);
-                border: none;
-                border-right: 1px solid rgba(130, 165, 230, 45);
-                border-bottom-left-radius: 14px;
-            }
-            QLabel#settingsNavigationLabel {
-                color: #7180a4;
-                background: transparent;
-                border: none;
-                padding-left: 10px;
-                font-size: 10px;
-                font-weight: 700;
-            }
-            QPushButton#settingsNavigationButton {
-                min-height: 42px;
-                padding: 0 12px;
-                color: #cbd4ed;
-                background: transparent;
-                border: 1px solid transparent;
-                border-radius: 9px;
-                text-align: left;
-                font-size: 14px;
-            }
-            QPushButton#settingsNavigationButton:hover {
-                color: #f5f7ff;
-                background-color: rgba(70, 88, 140, 80);
-            }
-            QPushButton#settingsNavigationButton:checked {
-                color: #f5f7ff;
-                background-color: rgba(38, 112, 145, 115);
-                border-color: rgba(76, 201, 240, 80);
-            }
-            QLabel#settingsPageTitle {
-                color: #f5f7ff;
-                background: transparent;
-                font-size: 24px;
-                font-weight: 700;
-            }
-            QLabel#settingsPageDescription {
-                color: #aeb9d5;
-                background: transparent;
-                font-size: 14px;
-            }
-            QFrame#settingsCard {
-                color: #f5f7ff;
-                background-color: #121c3a;
-                border: 1px solid rgba(130, 165, 230, 70);
-                border-radius: 12px;
-            }
-            QFrame#settingsCard QLabel {
-                color: #e9edff;
-                background: transparent;
-                border: none;
-            }
-            QFrame#settingsCard QCheckBox {
-                color: #f5f7ff;
-                background: transparent;
-                border: none;
-                spacing: 10px;
-                font-size: 14px;
-            }
-            QLabel#settingsCardTitle {
-                color: #f5f7ff;
-                font-size: 16px;
-                font-weight: 700;
-            }
-            QLabel#settingsNote {
-                color: #8795b8;
-                font-size: 12px;
-            }
-            QLabel#voiceFieldGroupTitle {
-                color: #dce7ff;
-                font-size: 13px;
-                font-weight: 600;
-                padding-top: 7px;
-            }
-            QKeySequenceEdit {
-                min-width: 230px;
-                background: transparent;
-                border: none;
-            }
-            QLineEdit#hotkeyEdit,
-            QKeySequenceEdit QLineEdit,
-            QComboBox#languageCombo,
-            QComboBox#voiceCombo,
-            QLineEdit#voiceTestText {
-                min-height: 34px;
-                min-width: 230px;
-                padding: 0 10px;
-                color: #f5f7ff;
-                background-color: rgba(5, 10, 28, 165);
-                border: 1px solid rgba(130, 165, 230, 85);
-                border-radius: 8px;
-                selection-background-color: rgba(76, 201, 240, 130);
-            }
-            QLineEdit#hotkeyEdit:focus,
-            QKeySequenceEdit QLineEdit:focus {
-                border-color: rgba(76, 201, 240, 190);
-            }
-            QComboBox#languageCombo QAbstractItemView,
-            QComboBox#voiceCombo QAbstractItemView {
-                color: #f5f7ff;
-                background-color: #182342;
-                border: 1px solid rgba(130, 165, 230, 85);
-                selection-background-color: rgb(38, 112, 145);
-            }
-            QScrollArea#settingsVoiceScroll QScrollBar:vertical {
-                width: 10px;
-                margin: 0;
-                background: rgba(5, 10, 28, 130);
-                border: none;
-            }
-            QScrollArea#settingsVoiceScroll QScrollBar::handle:vertical {
-                min-height: 36px;
-                background: rgba(76, 201, 240, 120);
-                border-radius: 5px;
-            }
-            QScrollArea#settingsVoiceScroll QScrollBar::add-line:vertical,
-            QScrollArea#settingsVoiceScroll QScrollBar::sub-line:vertical {
-                height: 0;
-            }
-            QPushButton#voiceActionButton {
-                min-height: 32px;
-                padding: 0 12px;
-                color: #f5f7ff;
-                background-color: rgba(38, 112, 145, 125);
-                border: 1px solid rgba(76, 201, 240, 95);
-                border-radius: 8px;
-            }
-            QPushButton#voiceActionButton:hover {
-                background-color: rgba(44, 140, 175, 170);
-            }
-            QPushButton#voiceActionButton:disabled {
-                color: #6f7893;
-                background-color: rgba(40, 50, 80, 80);
-                border-color: rgba(100, 115, 150, 45);
-            }
-            QPushButton#voiceCancelButton {
-                min-height: 32px;
-                padding: 0 12px;
-                color: #ffd8de;
-                background-color: rgba(135, 45, 65, 135);
-                border: 1px solid rgba(255, 120, 145, 105);
-                border-radius: 8px;
-            }
-            QPushButton#voiceCancelButton:hover {
-                background-color: rgba(175, 50, 75, 180);
-            }
-            QPushButton#voiceCancelButton:disabled {
-                color: #7f6670;
-                background-color: rgba(70, 38, 48, 80);
-                border-color: rgba(120, 75, 85, 45);
-            }
-            QProgressBar#voiceProgress {
-                min-height: 8px;
-                max-height: 8px;
-                color: transparent;
-                background-color: rgba(5, 10, 28, 165);
-                border: none;
-                border-radius: 4px;
-            }
-            QProgressBar#voiceProgress::chunk {
-                background-color: rgb(76, 201, 240);
-                border-radius: 4px;
-            }
-            QLabel#voiceStatus {
-                color: #9eacce;
-                font-size: 12px;
-            }
-            QLabel#voiceStatus[error="true"] {
-                color: #ff8d9b;
-            }
-            QLabel#voiceInstallLog {
-                min-height: 18px;
-                color: #7182aa;
-                font-size: 11px;
-                font-family: Consolas, "Courier New", monospace;
-            }
-            """
-        )
-
-        self.setStyleSheet(self.styleSheet() + COMBOBOX_STYLE)
-        self._translations = UiTranslations(self)
-        localization.changed.connect(self._retranslate_models)
 
     def _retranslate_models(self) -> None:
         self._populate_stt_models(self.stt_model())

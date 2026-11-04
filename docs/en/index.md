@@ -2,15 +2,16 @@
 
 [简体中文](../zh-CN/index.md) | English
 
-**Talk to ChatGPT and share screen context from a desktop overlay.**
+**Talk to ChatGPT or Gemini and share screen context from a desktop overlay.**
 
-LiveAI is a Windows desktop companion that connects to ChatGPT in your browser.
+LiveAI is a Windows desktop companion that connects to ChatGPT or Gemini in your
+browser.
 Dictate a question, attach a screenshot of a window or display, and hear the
 response while you keep working. A translucent overlay brings together editable
 voice input, subtitles, formatted replies, and an animated pet.
 
-LiveAI uses your signed-in ChatGPT browser session through Playwright. No API key
-is required; availability and usage limits follow your ChatGPT account. Screen
+LiveAI uses your signed-in ChatGPT or Gemini browser session through Playwright.
+No API key is required; availability and usage limits follow your account. Screen
 context is shared as screenshots attached to individual messages.
 
 [Download for Windows](https://github.com/ok-oldking/live-gpt/releases) ·
@@ -70,6 +71,26 @@ dictation may also request microphone permission on first use.
 LiveAI connects to your existing browser profile through the Chrome DevTools
 Protocol (CDP). It does not create a separate profile. If you deny the connection
 or setup fails, use **Enable Debugging** to retry.
+
+### Use Gemini
+
+Open `gemini.google.com` in the same browser. Gemini tabs appear in the tab list
+alongside ChatGPT tabs; when both sites are open, each entry starts with the site
+name. To open Gemini instead of ChatGPT when no chat tab exists, choose it under
+**Configure → Language → Default chat site**.
+
+LiveAI sends prompts to Gemini and reads its replies. Gemini's own dictation,
+image upload, and playback are not automated yet, so with a Gemini tab selected:
+
+- **Dictation** uses local Sherpa-ONNX transcription. Install a model under
+  **Configure → Recording** first.
+- **Playback** uses GPT-SoVITS when it is set up (installation folder and
+  reference audio). Otherwise the reply is shown as text only.
+- **Screenshots** are not attached; the text is sent and the status reads
+  *Sent without the screenshot*.
+
+LiveAI only attaches to ChatGPT and Gemini tabs. Your other tabs are never
+opened, reloaded, or closed.
 
 ### Set a prompt with ChatGPT project instructions
 
@@ -216,7 +237,7 @@ Open **Configure** to adjust the application. Valid changes save immediately.
 | --- | --- |
 | **Shortcuts** | Global recording shortcuts, with and without screenshots |
 | **Screenshots** | Cursor inclusion in window captures |
-| **Language** | English or 简体中文; detected from the system on first launch |
+| **Language** | English or 简体中文, detected from the system on first launch; the default chat site (ChatGPT or Gemini) |
 | **Recording** | Browser dictation or local Sherpa-ONNX transcription |
 | **Playing** | Browser playback or GPT-SoVITS, plus subtitle row count |
 | **Pet** | Pet selection, downloads, and idle animation behavior |
@@ -236,7 +257,7 @@ changing global pip settings. Use **Record microphone** to test transcription.
 
 Recording and playback are independent: local transcription can be combined with
 browser playback, or browser dictation with a local voice. Local transcription
-still sends prompts to the selected ChatGPT browser tab.
+still sends prompts to the selected browser tab.
 
 ### Local speech playback with GPT-SoVITS
 

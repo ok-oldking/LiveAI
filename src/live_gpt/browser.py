@@ -7,7 +7,7 @@ import time
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from queue import Empty, Queue
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, TypeVar
 
 from PySide6.QtCore import QThread, Signal
 
@@ -41,6 +41,7 @@ from .providers.media import MEDIA_PROGRESS_SCRIPT, MEDIA_STOP_SCRIPT
 
 
 logger = Logger.get_logger(__name__)
+_Request = TypeVar("_Request")
 
 
 @dataclass
@@ -105,9 +106,7 @@ class _ActiveResponse:
 class _ActiveReading:
     page: Any
     full_text: str
-    subtitles: tuple[str, ...]
     started_at: float = field(default_factory=time.monotonic)
-    last_subtitle: str = ""
     last_progress_fraction: float | None = None
     audio_seen: bool = False
     playback_started_at: float | None = None
@@ -765,17 +764,21 @@ class BrowserMonitor(QThread):
             state.last_tabs = []
             self.tabs_changed.emit([])
 
+    @staticmethod
+    def _drain(requests: Queue[_Request]) -> Iterator[_Request]:
+        """Yield requests queued so far without blocking the worker loop."""
+        while True:
+            try:
+                yield requests.get_nowait()
+            except Empty:
+                return
+
     def _process_dictation_requests(
         self,
         browser: Any | None,
         playwright_error: type[Exception],
     ) -> None:
-        while True:
-            try:
-                request = self._dictation_requests.get_nowait()
-            except Empty:
-                return
-
+        for request in self._drain(self._dictation_requests):
             if request.action == "start" and request.cancelled is not None and request.cancelled.is_set():
                 self.dictation_finished.emit(True, "", "Dictation cancelled")
                 continue
@@ -787,11 +790,7 @@ class BrowserMonitor(QThread):
                 )
                 continue
 
-            page = self._find_page(
-                browser,
-                request.tab_id,
-                playwright_error,
-            )
+            page = self._find_page(browser, request.tab_id, playwright_error)
             if page is None:
                 self._emit_dictation_failure(
                     request.action,
@@ -921,22 +920,13 @@ class BrowserMonitor(QThread):
         browser: Any | None,
         playwright_error: type[Exception],
     ) -> None:
-        while True:
-            try:
-                request = self._attachment_requests.get_nowait()
-            except Empty:
-                return
-
+        for request in self._drain(self._attachment_requests):
             if browser is None:
                 logger.warning(
                     "Unable to update dictation screenshot: browser is not connected"
                 )
                 continue
-            page = self._find_page(
-                browser,
-                request.tab_id,
-                playwright_error,
-            )
+            page = self._find_page(browser, request.tab_id, playwright_error)
             if page is None:
                 logger.warning(
                     "Unable to update dictation screenshot: chat tab is gone"
@@ -969,21 +959,12 @@ class BrowserMonitor(QThread):
         browser: Any | None,
         playwright_error: type[Exception],
     ) -> None:
-        while True:
-            try:
-                request = self._clear_requests.get_nowait()
-            except Empty:
-                return
-
+        for request in self._drain(self._clear_requests):
             if browser is None:
                 self.clear_finished.emit(False, "Browser is not connected")
                 continue
 
-            page = self._find_page(
-                browser,
-                request.tab_id,
-                playwright_error,
-            )
+            page = self._find_page(browser, request.tab_id, playwright_error)
             if page is None:
                 self.clear_finished.emit(
                     False,
@@ -1009,12 +990,7 @@ class BrowserMonitor(QThread):
         playwright_error: type[Exception],
         state: _MonitorState,
     ) -> None:
-        while True:
-            try:
-                request = self._send_requests.get_nowait()
-            except Empty:
-                return
-
+        for request in self._drain(self._send_requests):
             if browser is None:
                 self.send_finished.emit(
                     False,
@@ -1034,11 +1010,7 @@ class BrowserMonitor(QThread):
                 )
                 continue
 
-            page = self._find_page(
-                browser,
-                request.tab_id,
-                playwright_error,
-            )
+            page = self._find_page(browser, request.tab_id, playwright_error)
             if page is None:
                 self.send_finished.emit(
                     False,
@@ -1084,6 +1056,16 @@ class BrowserMonitor(QThread):
             )
             self.send_finished.emit(True, request.text, sent_message)
 
+    def _fail_response(self, state: _MonitorState, message: str) -> None:
+        """End the active reply with an error, finishing any local voice."""
+        response = state.active_response
+        if not self._use_browser_voice:
+            self.local_voice_announcement.emit(message)
+            if response is not None and response.last_text:
+                self.local_voice_updated.emit(response.last_text, True)
+        self.response_finished.emit(False, message)
+        state.active_response = None
+
     def _poll_active_response(self, state: _MonitorState) -> None:
         from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -1095,12 +1077,7 @@ class BrowserMonitor(QThread):
         # turn stays unmounted. Transient failures must not extend it forever.
         now = time.monotonic()
         if now - response.started_at >= 600:
-            if not self._use_browser_voice:
-                self.local_voice_announcement.emit("Timed out while waiting for a reply")
-            if not self._use_browser_voice and response.last_text:
-                self.local_voice_updated.emit(response.last_text, True)
-            self.response_finished.emit(False, "Timed out while waiting for a reply")
-            state.active_response = None
+            self._fail_response(state, "Timed out while waiting for a reply")
             return
 
         provider = self._provider_for_page(response.page)
@@ -1117,24 +1094,11 @@ class BrowserMonitor(QThread):
             return
         except Exception as error:
             logger.error("Unable to read the chat response", error)
-            if not self._use_browser_voice:
-                self.local_voice_announcement.emit(f"Could not read the reply: {error}")
-            if not self._use_browser_voice and response.last_text:
-                self.local_voice_updated.emit(response.last_text, True)
-            self.response_finished.emit(
-                False,
-                f"Could not read the reply: {error}",
-            )
-            state.active_response = None
+            self._fail_response(state, f"Could not read the reply: {error}")
             return
 
         if snapshot.error_message:
-            if not self._use_browser_voice:
-                self.local_voice_announcement.emit(snapshot.error_message)
-            if not self._use_browser_voice and response.last_text:
-                self.local_voice_updated.emit(response.last_text, True)
-            self.response_finished.emit(False, snapshot.error_message)
-            state.active_response = None
+            self._fail_response(state, snapshot.error_message)
             return
 
         if not snapshot.has_new_turn:
@@ -1245,7 +1209,6 @@ class BrowserMonitor(QThread):
             state.active_reading = _ActiveReading(
                 page=response.page,
                 full_text=snapshot.text,
-                subtitles=self._subtitle_segments(snapshot.text),
             )
             self.reading_started.emit("Preparing Read aloud…")
             self.reading_changed.emit({"text": snapshot.text, "fraction": 0.0})
@@ -1385,52 +1348,6 @@ class BrowserMonitor(QThread):
             except playwright_error:
                 continue
         return None
-
-    @staticmethod
-    def _subtitle_segments(
-        text: str,
-        target_length: int = 54,
-    ) -> tuple[str, ...]:
-        normalized = re.sub(r"\s+", " ", text).strip()
-        if not normalized:
-            return ()
-
-        units: list[str] = []
-        for word in normalized.split():
-            while len(word) > target_length:
-                units.append(word[:target_length])
-                word = word[target_length:]
-            if word:
-                units.append(word)
-
-        lines: list[str] = []
-        current = ""
-        for unit in units:
-            candidate = f"{current} {unit}".strip()
-            if current and len(candidate) > target_length:
-                lines.append(current)
-                current = unit
-            else:
-                current = candidate
-        if current:
-            lines.append(current)
-        return tuple(lines)
-
-    @staticmethod
-    def _subtitle_at_progress(
-        subtitles: tuple[str, ...],
-        fraction: float,
-    ) -> str:
-        if not subtitles:
-            return ""
-        weights = [max(len(line), 12) for line in subtitles]
-        target = min(max(fraction, 0.0), 1.0) * sum(weights)
-        cumulative = 0
-        for index, weight in enumerate(weights):
-            cumulative += weight
-            if target < cumulative:
-                return "\n".join(subtitles[index:index + 2])
-        return subtitles[-1]
 
     @staticmethod
     def _estimated_reading_duration(text: str) -> float:
