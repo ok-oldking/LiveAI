@@ -14,11 +14,13 @@ from .base import (
     UsageLimitError,
 )
 from .chatgpt import ChatGPTProvider
+from .gemini import GeminiProvider
 
 # Classes, not instances: id, display_name, home_url and matches_url are
 # class-level so the relay and UI can use them without a page context.
 PROVIDERS: dict[str, type[ChatProvider]] = {
     ChatGPTProvider.id: ChatGPTProvider,
+    GeminiProvider.id: GeminiProvider,
 }
 DEFAULT_PROVIDER_ID = ChatGPTProvider.id
 
@@ -60,6 +62,7 @@ __all__ = [
     "ChatProvider",
     "DEFAULT_PROVIDER_ID",
     "DictationStartCancelled",
+    "GeminiProvider",
     "NullProviderContext",
     "PROVIDERS",
     "ProviderContext",

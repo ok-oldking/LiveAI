@@ -190,6 +190,14 @@ class BrowserMonitor(QThread):
         self._use_browser_voice = True
         self._selected_tab_id: str | None = None
 
+    def set_default_provider(self, provider_id: str) -> None:
+        """Choose the site opened when the browser has no chat tab."""
+        provider = self.providers.get(provider_id)
+        if provider is None:
+            logger.warning(f"Ignoring unknown chat provider {provider_id!r}")
+            return
+        self.default_provider = provider
+
     def set_use_browser_voice(self, enabled: bool) -> None:
         self._use_browser_voice = bool(enabled)
 
@@ -1039,21 +1047,19 @@ class BrowserMonitor(QThread):
                 )
                 continue
             provider = self._provider_for_page(page)
-            if (
-                request.screenshot_webp is not None
-                and Capability.IMAGE_UPLOAD not in provider.capabilities
-            ):
-                self.send_finished.emit(
-                    False, request.text, "Screenshots are not available on this site",
-                )
-                continue
+            screenshot = request.screenshot_webp
+            sent_message = "Sent"
+            if screenshot is not None and Capability.IMAGE_UPLOAD not in provider.capabilities:
+                # A screenshot hotkey must still deliver the spoken prompt.
+                screenshot = None
+                sent_message = "Sent without the screenshot"
 
             try:
                 turn_marker_before = provider.turn_marker(page)
                 provider.send(
                     page,
                     request.text,
-                    request.screenshot_webp,
+                    screenshot,
                     preserve_attachments=request.preserve_attachments,
                 )
             except UsageLimitError as error:
@@ -1076,7 +1082,7 @@ class BrowserMonitor(QThread):
                 page=page,
                 turn_marker_before=turn_marker_before,
             )
-            self.send_finished.emit(True, request.text, "Sent")
+            self.send_finished.emit(True, request.text, sent_message)
 
     def _poll_active_response(self, state: _MonitorState) -> None:
         from playwright.sync_api import TimeoutError as PlaywrightTimeoutError

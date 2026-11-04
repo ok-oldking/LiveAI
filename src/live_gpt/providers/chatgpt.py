@@ -7,7 +7,6 @@ from typing import Any
 
 from ..browser_discovery import is_chatgpt_url
 from ..logger import Logger
-from ..response_content import RESPONSE_CONTENT_SCRIPT
 from .base import (
     Capability,
     NullProviderContext,
@@ -15,6 +14,7 @@ from .base import (
     ResponseSnapshot,
     UsageLimitError,
 )
+from .dom import click_when_ready, locator_is_visible, read_rich_content
 from .media import MEDIA_PROGRESS_SCRIPT, MEDIA_TRACKER_SCRIPT
 
 
@@ -210,29 +210,7 @@ class ChatGPTProvider:
                     raise RuntimeError("Screenshot upload failed") from None
                 raise
 
-    @staticmethod
-    def _click_send_button(
-        page: Any, send_button: Any, *, timeout: int = 15_000,
-    ) -> None:
-        # A background tab or an animated composer may never provide the two
-        # stable animation frames required by Locator.click(). Check readiness
-        # and activate the same button atomically, without moving browser focus.
-        deadline = time.monotonic() + timeout / 1000
-        while True:
-            remaining = int((deadline - time.monotonic()) * 1000)
-            if remaining <= 0:
-                raise RuntimeError("The send button did not become ready")
-            clicked = send_button.evaluate("""button => {
-                if (!button.isConnected || !button.getClientRects().length
-                    || getComputedStyle(button).visibility !== 'visible'
-                    || button.matches(':disabled')
-                    || button.closest('[inert], [aria-disabled="true"]')) return false;
-                button.click();
-                return true;
-            }""", timeout=remaining)
-            if clicked:
-                return
-            page.wait_for_timeout(min(100, remaining))
+    _click_send_button = staticmethod(click_when_ready)
 
     @staticmethod
     def _turn_id(turn: Any, **kwargs: Any) -> str | None:
@@ -804,14 +782,7 @@ class ChatGPTProvider:
         ]
         return "\n".join(lines).strip()
 
-    @staticmethod
-    def _response_content(markdown: Any) -> tuple[str, str]:
-        clean_text = markdown.evaluate(RESPONSE_CONTENT_SCRIPT)
-        if isinstance(clean_text, dict):
-            return str(clean_text.get("text", "")).strip(), str(clean_text.get("html", ""))
-        if isinstance(clean_text, str):
-            return clean_text.strip(), ""
-        return markdown.inner_text(timeout=1_000).strip(), ""
+    _response_content = staticmethod(read_rich_content)
 
     @staticmethod
     def is_thinking_status(status: str) -> bool:
@@ -963,12 +934,7 @@ class ChatGPTProvider:
             )
             locator.evaluate("element => element.click()")
 
-    @staticmethod
-    def _locator_is_visible(locator: Any) -> bool:
-        try:
-            return bool(locator.is_visible())
-        except Exception:
-            return False
+    _locator_is_visible = staticmethod(locator_is_visible)
 
 
 __all__ = [

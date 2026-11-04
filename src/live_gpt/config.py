@@ -10,6 +10,7 @@ from typing import Any
 
 from .logger import Logger
 from .localization import resolve_language, system_uses_simplified_chinese
+from .providers import DEFAULT_PROVIDER_ID, PROVIDERS
 
 
 logger = Logger.get_logger(__name__)
@@ -23,6 +24,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "capture_source": "",
     "capture_cursor": True,
     "chat_window": "",
+    "default_provider": DEFAULT_PROVIDER_ID,
     "window_geometry": [],
     "window_locked": False,
     "subtitle_rows": 4,
@@ -85,6 +87,8 @@ def _valid_value(key: str, value: Any, default: Any) -> bool:
         return value == DEFAULT_CONFIG["version"]
     if key == "language":
         return value in ("", "en", "zh")
+    if key == "default_provider":
+        return value in PROVIDERS
     if key == "recording_backend":
         return value in ("web", "sherpa")
     if key == "playing_backend":

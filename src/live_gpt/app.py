@@ -79,7 +79,7 @@ from .browser import (
 from .config import Config, DEFAULT_CONFIG
 from .localization import UiTranslations, localization, resolve_language, translate_message, tr
 from .pet import PetWidget, available_pets, default_pet_path
-from .providers import PROVIDERS, provider_site
+from .providers import DEFAULT_PROVIDER_ID, PROVIDERS, Capability, provider_site
 from .pet_download import download_pet, pet_source
 from .logger import Logger, config_logger, shutdown_logger
 from .response_content import reply_code_blocks, reply_html_with_links
@@ -1056,6 +1056,32 @@ class HotkeyConfigDialog(QDialog):
         self.language_status.setWordWrap(True)
         language_card_layout.addWidget(self.language_status)
         language_page_layout.addWidget(language_card)
+
+        site_card = QFrame()
+        site_card.setObjectName("settingsCard")
+        site_card_layout = QVBoxLayout(site_card)
+        site_card_layout.setContentsMargins(20, 20, 20, 20)
+        site_card_layout.setSpacing(14)
+        site_card_title = QLabel(tr("Default chat site"))
+        site_card_title.setObjectName("settingsCardTitle")
+        site_card_layout.addWidget(site_card_title)
+        self.default_provider_combo = QComboBox()
+        self.default_provider_combo.setObjectName("voiceCombo")
+        self.default_provider_combo.setAccessibleName(tr("Default chat site"))
+        for provider_id, provider_class in PROVIDERS.items():
+            self.default_provider_combo.addItem(provider_class.display_name, provider_id)
+        saved_provider = (
+            str(config["default_provider"]) if config is not None else DEFAULT_PROVIDER_ID
+        )
+        self.default_provider_combo.setCurrentIndex(
+            max(self.default_provider_combo.findData(saved_provider), 0)
+        )
+        site_card_layout.addWidget(self.default_provider_combo)
+        site_note = QLabel(tr("Opened in a new tab when the browser has no chat tab."))
+        site_note.setObjectName("settingsNote")
+        site_note.setWordWrap(True)
+        site_card_layout.addWidget(site_note)
+        language_page_layout.addWidget(site_card)
         language_page_layout.addStretch()
 
         self.recording_section = QWidget()
@@ -1883,6 +1909,9 @@ class HotkeyConfigDialog(QDialog):
         self.language_combo.currentIndexChanged.connect(
             self._language_changed
         )
+        self.default_provider_combo.currentIndexChanged.connect(
+            lambda: self._save_setting("default_provider", self.default_provider())
+        )
         self.recording_backend_combo.currentIndexChanged.connect(
             lambda: self._save_setting(
                 "recording_backend", self.recording_backend()
@@ -2685,6 +2714,9 @@ class HotkeyConfigDialog(QDialog):
 
     def language(self) -> str:
         return str(self.language_combo.currentData() or localization.language)
+
+    def default_provider(self) -> str:
+        return str(self.default_provider_combo.currentData() or DEFAULT_PROVIDER_ID)
 
     def recording_backend(self) -> str:
         return str(self.recording_backend_combo.currentData() or "web")
@@ -3980,6 +4012,12 @@ class OverlayWindow(QMainWindow):
     def set_preferred_chat_window(self, url: str) -> None:
         self._preferred_chat_url = url
 
+    def set_new_tab_site(self, site: str) -> None:
+        """Name the site opened when the browser has no chat tab."""
+        self._new_tab_site = site
+        if self._debug_connected and not self._browser_connected:
+            self._show_browser_connection_hint()
+
     def set_send_result(
         self,
         success: bool,
@@ -5178,11 +5216,11 @@ class TrayController:
         self.window.auto_hide_button.setChecked(
             bool(self.config["auto_hide"])
         )
-        self.browser_monitor = BrowserMonitor()
-        self.browser_monitor.set_use_browser_voice(
-            self.config["playing_backend"] == "web"
-        )
+        self.browser_monitor = BrowserMonitor(str(self.config["default_provider"]))
+        self.window.set_new_tab_site(provider_site(str(self.config["default_provider"])))
         self.selected_chat_tab_id: str | None = None
+        self._tab_providers: dict[str, str] = {}
+        self._sync_voice_mode()
         self.dictation_tab_id: str | None = None
         self._dictation_state = "idle"
         self._dictation_input_held = False
@@ -5228,6 +5266,8 @@ class TrayController:
         self.window.capture_source_selected.connect(
             self._save_capture_source_preference
         )
+        # Record each tab's site before the window selects one of them.
+        self.browser_monitor.tabs_changed.connect(self._remember_tab_providers)
         self.browser_monitor.tabs_changed.connect(self.window.set_chat_tabs)
         self.browser_monitor.response_links_changed.connect(self.window.set_response_links)
         self.browser_monitor.response_html_changed.connect(self.window.set_response_html)
@@ -5459,9 +5499,10 @@ class TrayController:
             sequences = self._load_hotkey_sequences()
             bindings = self._bindings_for_sequences(sequences)
             self._hotkey_sequences = sequences
-            self.browser_monitor.set_use_browser_voice(
-                self.config["playing_backend"] == "web"
-            )
+            default_provider = str(self.config["default_provider"])
+            self.browser_monitor.set_default_provider(default_provider)
+            self.window.set_new_tab_site(provider_site(default_provider))
+            self._sync_voice_mode()
             self._start_stt_preload()
             self._start_local_tts_preload()
             self.hotkey_monitor.update_bindings(
@@ -5523,7 +5564,7 @@ class TrayController:
     def _local_tts_configuration(
         self,
     ) -> tuple[TextToSpeechProvider, str, str, str] | None:
-        if self.config["playing_backend"] != "sovits":
+        if not self._uses_local_playback():
             return None
         manager = self.sovits_manager
         try:
@@ -5607,7 +5648,7 @@ class TrayController:
 
     def _speak_local_announcement(self, message: str, *, final: bool = False) -> None:
         if (
-            getattr(self, "config", {}).get("playing_backend") != "sovits"
+            not self._uses_local_playback()
             or getattr(self, "_local_voice_interrupted", False)
         ):
             return
@@ -5842,8 +5883,7 @@ class TrayController:
         self.window.show_for_auto_hide()
 
         if (
-            getattr(self, "config", {}).get("recording_backend", "web")
-            == "sherpa"
+            self._uses_local_recording()
         ):
             self._schedule_dictation_screenshot_upload()
             self._start_local_dictation()
@@ -6242,8 +6282,7 @@ class TrayController:
                 True,
             )
             if (
-                getattr(self, "config", {}).get("recording_backend", "web")
-                == "sherpa"
+                self._uses_local_recording()
             ):
                 QTimer.singleShot(
                     0,
@@ -6376,6 +6415,7 @@ class TrayController:
     def _select_chat_tab(self, tab_id: str) -> None:
         self.selected_chat_tab_id = tab_id
         self.browser_monitor.request_focus_tab(tab_id)
+        self._sync_voice_mode()
         logger.info(f"Selected chat tab id={tab_id}")
 
     def _set_chat_connection(self, connected: bool) -> None:
@@ -6383,6 +6423,46 @@ class TrayController:
             return
         self.selected_chat_tab_id = None
         self.browser_monitor.request_focus_tab(None)
+        self._sync_voice_mode()
+
+    def _remember_tab_providers(self, tabs: list[dict[str, str]]) -> None:
+        self._tab_providers = {
+            tab["id"]: tab.get("provider", DEFAULT_PROVIDER_ID) for tab in tabs
+        }
+
+    def _selected_capabilities(self) -> frozenset[Capability]:
+        """Features of the selected tab's site; all of them when unknown."""
+        tab_id = getattr(self, "selected_chat_tab_id", None)
+        provider_id = getattr(self, "_tab_providers", {}).get(tab_id or "")
+        provider_class = PROVIDERS.get(provider_id or "")
+        return provider_class.capabilities if provider_class else frozenset(Capability)
+
+    def _uses_local_recording(self) -> bool:
+        if getattr(self, "config", {}).get("recording_backend", "web") == "sherpa":
+            return True
+        return Capability.DICTATION not in self._selected_capabilities()
+
+    def _local_voice_set_up(self) -> bool:
+        config = getattr(self, "config", {})
+        return bool(
+            str(config.get("sovits_installation", "")).strip()
+            and str(config.get("sovits_ref_audio_path", "")).strip()
+        )
+
+    def _uses_local_playback(self) -> bool:
+        if getattr(self, "config", {}).get("playing_backend") == "sovits":
+            return True
+        # Sites without Read aloud speak through GPT-SoVITS once it is set up;
+        # otherwise the reply is shown as text only.
+        return (
+            Capability.READ_ALOUD not in self._selected_capabilities()
+            and self._local_voice_set_up()
+        )
+
+    def _sync_voice_mode(self) -> None:
+        monitor = getattr(self, "browser_monitor", None)
+        if monitor is not None:
+            monitor.set_use_browser_voice(not self._uses_local_playback())
 
     def _save_chat_preference(self, url: str) -> None:
         self.config["chat_window"] = url
