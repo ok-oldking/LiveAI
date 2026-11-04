@@ -24,6 +24,17 @@ class ConfigTests(unittest.TestCase):
                     config["sovits_seed"] = invalid
                     self.assertEqual(Config(path)["sovits_seed"], -1)
 
+    def test_legacy_chatgpt_window_moves_to_chat_window(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            url = "https://chatgpt.com/c/saved"
+            path.write_text(json.dumps({"chatgpt_window": url}), encoding="utf-8")
+            config = Config(path)
+            self.assertEqual(config["chat_window"], url)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["chat_window"], url)
+            self.assertNotIn("chatgpt_window", saved)
+
     def test_pypi_default_follows_system_display_language(self) -> None:
         for languages, region, expected in (
             (["zh-Hans-CN", "en-US"], "en_US", "ali"),

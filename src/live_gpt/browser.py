@@ -25,13 +25,17 @@ from .browser_windows import (
     windows_default_browser_executable,
 )
 from .logger import Logger
-from .cdp_bridge import ChatGPTCDPBridge
+from .cdp_bridge import CDPBridge
 from .providers import (
     DEFAULT_PROVIDER_ID,
+    PROVIDERS,
+    Capability,
     ChatProvider,
     DictationStartCancelled,
     UsageLimitError,
     create_provider,
+    is_supported_url,
+    provider_id_for_url,
 )
 from .providers.media import MEDIA_PROGRESS_SCRIPT, MEDIA_STOP_SCRIPT
 
@@ -42,9 +46,9 @@ logger = Logger.get_logger(__name__)
 @dataclass
 class _MonitorState:
     browser: Any | None = None
-    bridge: ChatGPTCDPBridge | None = None
+    bridge: CDPBridge | None = None
     discovery_session: Any | None = None
-    initial_chatgpt_tab_checked: bool = False
+    initial_tab_checked: bool = False
     focus_page: Any | None = None
     focus_session: Any | None = None
     settings_opened: bool = False
@@ -158,11 +162,15 @@ class BrowserMonitor(QThread):
     dictation_finished = Signal(bool, str, str)
     clear_finished = Signal(bool, str)
 
-    def __init__(self, provider_id: str = DEFAULT_PROVIDER_ID) -> None:
+    def __init__(self, default_provider_id: str = DEFAULT_PROVIDER_ID) -> None:
         super().__init__()
-        self.provider: ChatProvider = create_provider(
-            provider_id, _MonitorProviderContext(self),
-        )
+        context = _MonitorProviderContext(self)
+        self.providers: dict[str, ChatProvider] = {
+            provider_id: create_provider(provider_id, context)
+            for provider_id in PROVIDERS
+        }
+        # Opened in a new tab when the browser has no supported chat page.
+        self.default_provider = self.providers[default_provider_id]
         self._stop_requested = False
         self._retry_connection_requested = False
         self._connection_pending = threading.Event()
@@ -186,7 +194,7 @@ class BrowserMonitor(QThread):
         self._use_browser_voice = bool(enabled)
 
     def request_focus_tab(self, tab_id: str | None) -> None:
-        """Keep the selected ChatGPT tab active without changing window focus."""
+        """Keep the selected chat tab active without changing window focus."""
         self._selected_tab_id = tab_id
         self._wake_event.set()
 
@@ -229,7 +237,7 @@ class BrowserMonitor(QThread):
         *,
         preserve_attachments: bool = False,
     ) -> None:
-        """Queue text for the selected ChatGPT page on the worker thread."""
+        """Queue text for the selected chat page on the worker thread."""
         if self._connection_pending.is_set():
             self.send_finished.emit(
                 False, text, "Approve remote debugging in the browser before sending",
@@ -438,7 +446,7 @@ class BrowserMonitor(QThread):
         try:
             reading.page.evaluate(MEDIA_STOP_SCRIPT)
         except Exception as error:
-            logger.warning(f"Unable to stop ChatGPT playback cleanly: {error}")
+            logger.warning(f"Unable to stop page playback cleanly: {error}")
         state.active_reading = None
         self.reading_finished.emit(False, self._stop_reading_message)
 
@@ -483,7 +491,7 @@ class BrowserMonitor(QThread):
         self._fail_pending_requests(playwright_error, state)
         try:
             logger.info(f"Connecting to browser endpoint={endpoint!r}")
-            state.bridge = ChatGPTCDPBridge(endpoint)
+            state.bridge = CDPBridge(endpoint)
             relay_endpoint = state.bridge.start()
             state.browser = playwright.chromium.connect_over_cdp(
                 relay_endpoint,
@@ -537,7 +545,7 @@ class BrowserMonitor(QThread):
         state.connection_error = None
         state.settings_opened = False
         state.settings_attempted = False
-        state.initial_chatgpt_tab_checked = False
+        state.initial_tab_checked = False
         self.debug_connection_changed.emit(True)
         self._set_status("Browser connected")
         logger.info(f"Connected to browser endpoint={endpoint!r}")
@@ -590,28 +598,31 @@ class BrowserMonitor(QThread):
         elif tabs != state.last_tabs:
             state.last_tabs = tabs
             self.tabs_changed.emit(tabs)
-        if tabs is not None and not state.initial_chatgpt_tab_checked:
+        if tabs is not None and not state.initial_tab_checked:
             targets = target_snapshot.get("targetInfos") if isinstance(target_snapshot, dict) else None
             if not isinstance(targets, list):
                 return
             # Existing targets can precede their Playwright page attachment.
             # Check both views before deciding that a new tab is needed.
-            state.initial_chatgpt_tab_checked = True
+            state.initial_tab_checked = True
             if tabs or any(
                 isinstance(target, dict) and target.get("type") == "page"
                 and isinstance(target.get("url"), str)
-                and self.provider.matches_url(target["url"])
+                and is_supported_url(target["url"])
                 for target in targets
             ) or self._stop_requested or self._retry_connection_requested:
                 return
+            provider = self.default_provider
             try:
                 # Creating about:blank through new_page() would be filtered out
-                # by the relay. Create the ChatGPT target directly instead.
-                state.discovery_session.send("Target.createTarget", {"url": self.provider.home_url})
-                logger.info("Opened ChatGPT in a new tab after connecting to the browser")
+                # by the relay. Create the chat target directly instead.
+                state.discovery_session.send("Target.createTarget", {"url": provider.home_url})
+                logger.info(
+                    f"Opened {provider.display_name} in a new tab after connecting to the browser"
+                )
             except playwright_error as error:
-                logger.warning(f"Could not open ChatGPT tab: {error}")
-                self._set_status(f"Could not open ChatGPT tab: {error}")
+                logger.warning(f"Could not open a chat tab: {error}")
+                self._set_status(f"Could not open a chat tab: {error}")
 
     @staticmethod
     def _browser_pages(
@@ -645,22 +656,36 @@ class BrowserMonitor(QThread):
         previous = {tab["id"]: tab for tab in previous_tabs or []}
         for page in pages:
             try:
-                if page.is_closed() or not self.provider.matches_url(page.url):
+                if page.is_closed():
+                    continue
+                url = page.url
+                provider_id = provider_id_for_url(url)
+                if provider_id is None:
                     continue
                 page_id = str(id(page))
-                url = page.url
                 old_tab = previous.get(page_id, {})
                 title = target_titles.get(url) or (
                     old_tab.get("title") if old_tab.get("url") == url else None
-                ) or self.provider.display_name
-                tabs.append(
-                    {"id": page_id, "title": title, "url": url}
-                )
+                ) or self.providers[provider_id].display_name
+                tabs.append({
+                    "id": page_id,
+                    "title": title,
+                    "url": url,
+                    "provider": provider_id,
+                })
             except playwright_error:
                 continue
 
         tabs.sort(key=lambda tab: tab["title"].casefold())
         return tabs
+
+    def _provider_for_page(self, page: Any) -> ChatProvider:
+        """Return the provider that owns a page, else the default provider."""
+        try:
+            provider_id = provider_id_for_url(page.url)
+        except Exception:
+            provider_id = None
+        return self.providers.get(provider_id or "", self.default_provider)
 
     @contextmanager
     def _focus_emulation_lifetime(self, state: _MonitorState) -> Iterator[None]:
@@ -705,11 +730,11 @@ class BrowserMonitor(QThread):
         try:
             state.focus_session = page.context.new_cdp_session(page)
             state.focus_session.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
-            logger.info(f"Enabled background focus for ChatGPT tab id={id(page)}")
+            logger.info(f"Enabled background focus for chat tab id={id(page)}")
         except Exception as error:
             self._clear_focus_emulation(state)
             state.focus_page = page
-            logger.warning(f"Could not enable background focus for ChatGPT: {error}")
+            logger.warning(f"Could not enable background focus for the chat tab: {error}")
 
     def _handle_disconnect(self, state: _MonitorState) -> None:
         self._clear_focus_emulation(state)
@@ -762,7 +787,13 @@ class BrowserMonitor(QThread):
             if page is None:
                 self._emit_dictation_failure(
                     request.action,
-                    "Selected ChatGPT window is no longer available",
+                    "Selected chat window is no longer available",
+                )
+                continue
+            provider = self._provider_for_page(page)
+            if Capability.DICTATION not in provider.capabilities:
+                self._emit_dictation_failure(
+                    request.action, "Browser dictation is not available on this site",
                 )
                 continue
 
@@ -773,22 +804,25 @@ class BrowserMonitor(QThread):
                 if request.action == "start":
                     self._dictation_start_cancelled = request.cancelled
                     self._check_dictation_start_cancelled()
-                    self.provider.cancel_existing_dictation(page, starting=True)
+                    provider.cancel_existing_dictation(page, starting=True)
                     # Clear a previous prompt's screenshot before installing
                     # this one; attachment requests use a separate queue.
                     self._process_attachment_requests(browser, playwright_error)
                     self._check_dictation_start_cancelled()
-                    initial_text = self.provider.read_composer_text(page)
-                    if request.screenshot_webp is not None:
+                    initial_text = provider.read_composer_text(page)
+                    if (
+                        request.screenshot_webp is not None
+                        and Capability.IMAGE_UPLOAD in provider.capabilities
+                    ):
                         self._check_dictation_start_cancelled()
-                        self.provider.clear_attachments(page)
+                        provider.clear_attachments(page)
                         self._check_dictation_start_cancelled()
                         screenshot_pasted = True
-                        self.provider.paste_screenshot(page, request.screenshot_webp)
-                        self.provider.wait_for_screenshot_attachment(page)
+                        provider.paste_screenshot(page, request.screenshot_webp)
+                        provider.wait_for_screenshot_attachment(page)
                     self._check_dictation_start_cancelled()
                     start_attempted = True
-                    self.provider.start_dictation(page)
+                    provider.start_dictation(page)
                     self._check_dictation_start_cancelled()
                     self._dictation_initial_text[request.tab_id] = initial_text
                     self.dictation_started.emit(
@@ -800,21 +834,21 @@ class BrowserMonitor(QThread):
                         request.tab_id,
                         "",
                     )
-                    text = self.provider.finish_dictation(
+                    text = provider.finish_dictation(
                         page,
                         initial_text,
                     )
                     self.dictation_finished.emit(
                         True,
                         text,
-                        "Dictation copied from ChatGPT",
+                        "Dictation copied",
                     )
                 else:
                     initial_text = self._dictation_initial_text.pop(
                         request.tab_id,
                         "",
                     )
-                    text = self.provider.cancel_dictation(
+                    text = provider.cancel_dictation(
                         page,
                         initial_text,
                     )
@@ -830,10 +864,10 @@ class BrowserMonitor(QThread):
                 ):
                     try:
                         if not self._stop_requested:
-                            if start_attempted and self.provider.cancel_existing_dictation(page):
-                                self.provider.set_composer_text(page, initial_text)
+                            if start_attempted and provider.cancel_existing_dictation(page):
+                                provider.set_composer_text(page, initial_text)
                             if screenshot_pasted:
-                                self.provider.clear_attachments(page)
+                                provider.clear_attachments(page)
                     except Exception as cleanup_error:
                         logger.error("Unable to cancel browser dictation startup", cleanup_error)
                         self._emit_dictation_failure(
@@ -850,8 +884,8 @@ class BrowserMonitor(QThread):
                     start_attempted or request.action in ("finish", "cancel")
                 ):
                     try:
-                        if self.provider.cancel_existing_dictation(page):
-                            self.provider.set_composer_text(page, initial_text)
+                        if provider.cancel_existing_dictation(page):
+                            provider.set_composer_text(page, initial_text)
                     except Exception as cleanup_error:
                         logger.warning(f"Could not reset browser dictation after failure: {cleanup_error}")
                 self._emit_dictation_failure(
@@ -897,22 +931,26 @@ class BrowserMonitor(QThread):
             )
             if page is None:
                 logger.warning(
-                    "Unable to update dictation screenshot: ChatGPT tab is gone"
+                    "Unable to update dictation screenshot: chat tab is gone"
                 )
                 continue
+            provider = self._provider_for_page(page)
+            if Capability.IMAGE_UPLOAD not in provider.capabilities:
+                logger.info(f"{provider.display_name} does not accept screenshots; skipping")
+                continue
             try:
-                self.provider.clear_attachments(page)
+                provider.clear_attachments(page)
                 if request.action == "replace":
                     if request.screenshot_webp is None:
                         raise RuntimeError("The screenshot data is empty")
-                    self.provider.upload_screenshot(page, request.screenshot_webp)
+                    provider.upload_screenshot(page, request.screenshot_webp)
                     logger.info(
-                        "Pasted dictation screenshot into ChatGPT "
+                        "Pasted dictation screenshot into chat "
                         f"tab_id={request.tab_id!r}"
                     )
                 else:
                     logger.info(
-                        "Removed pending dictation screenshot from ChatGPT "
+                        "Removed pending dictation screenshot from chat "
                         f"tab_id={request.tab_id!r}"
                     )
             except Exception as error:
@@ -941,17 +979,17 @@ class BrowserMonitor(QThread):
             if page is None:
                 self.clear_finished.emit(
                     False,
-                    "Selected ChatGPT window is no longer available",
+                    "Selected chat window is no longer available",
                 )
                 continue
 
             try:
-                self.provider.clear_composer(page)
+                self._provider_for_page(page).clear_composer(page)
             except Exception as error:
-                logger.error("Unable to clear ChatGPT input", error)
+                logger.error("Unable to clear chat input", error)
                 self.clear_finished.emit(
                     False,
-                    f"Could not clear ChatGPT input: {error}",
+                    f"Could not clear the input: {error}",
                 )
                 continue
 
@@ -997,13 +1035,22 @@ class BrowserMonitor(QThread):
                 self.send_finished.emit(
                     False,
                     request.text,
-                    "Selected ChatGPT window is no longer available",
+                    "Selected chat window is no longer available",
+                )
+                continue
+            provider = self._provider_for_page(page)
+            if (
+                request.screenshot_webp is not None
+                and Capability.IMAGE_UPLOAD not in provider.capabilities
+            ):
+                self.send_finished.emit(
+                    False, request.text, "Screenshots are not available on this site",
                 )
                 continue
 
             try:
-                turn_marker_before = self.provider.turn_marker(page)
-                self.provider.send(
+                turn_marker_before = provider.turn_marker(page)
+                provider.send(
                     page,
                     request.text,
                     request.screenshot_webp,
@@ -1013,23 +1060,23 @@ class BrowserMonitor(QThread):
                 self.send_finished.emit(False, request.text, str(error))
                 continue
             except Exception as error:
-                logger.error("Unable to send text to ChatGPT", error)
+                logger.error("Unable to send text to chat", error)
                 self.send_finished.emit(
                     False,
                     request.text,
-                    f"Could not send to ChatGPT: {error}",
+                    f"Could not send: {error}",
                 )
                 continue
 
             logger.info(
-                "Sent text to ChatGPT "
+                "Sent text to chat "
                 f"tab_id={request.tab_id!r} characters={len(request.text)}"
             )
             state.active_response = _ActiveResponse(
                 page=page,
                 turn_marker_before=turn_marker_before,
             )
-            self.send_finished.emit(True, request.text, "Sent to ChatGPT")
+            self.send_finished.emit(True, request.text, "Sent")
 
     def _poll_active_response(self, state: _MonitorState) -> None:
         from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -1043,33 +1090,34 @@ class BrowserMonitor(QThread):
         now = time.monotonic()
         if now - response.started_at >= 600:
             if not self._use_browser_voice:
-                self.local_voice_announcement.emit("Timed out while waiting for ChatGPT's reply")
+                self.local_voice_announcement.emit("Timed out while waiting for a reply")
             if not self._use_browser_voice and response.last_text:
                 self.local_voice_updated.emit(response.last_text, True)
-            self.response_finished.emit(False, "Timed out while waiting for ChatGPT's reply")
+            self.response_finished.emit(False, "Timed out while waiting for a reply")
             state.active_response = None
             return
 
+        provider = self._provider_for_page(response.page)
         try:
-            snapshot = self.provider.response_snapshot(
+            snapshot = provider.response_snapshot(
                 response.page,
                 response.turn_marker_before,
             )
         except PlaywrightTimeoutError:
-            # ChatGPT can replace/unmount the turn between locator calls.
+            # Sites can replace/unmount the turn between locator calls.
             # Keep the last text and retry on the next worker-loop poll.
             response.completion_candidate_at = None
-            logger.debug("ChatGPT response DOM read timed out; retrying next poll")
+            logger.debug("Response DOM read timed out; retrying next poll")
             return
         except Exception as error:
-            logger.error("Unable to read the ChatGPT response", error)
+            logger.error("Unable to read the chat response", error)
             if not self._use_browser_voice:
-                self.local_voice_announcement.emit(f"Could not read ChatGPT's reply: {error}")
+                self.local_voice_announcement.emit(f"Could not read the reply: {error}")
             if not self._use_browser_voice and response.last_text:
                 self.local_voice_updated.emit(response.last_text, True)
             self.response_finished.emit(
                 False,
-                f"Could not read ChatGPT's reply: {error}",
+                f"Could not read the reply: {error}",
             )
             state.active_response = None
             return
@@ -1086,7 +1134,7 @@ class BrowserMonitor(QThread):
         if not snapshot.has_new_turn:
             response.completion_candidate_at = None
             if snapshot.status != response.last_status and (
-                snapshot.is_generating or self.provider.is_thinking_status(response.last_status)
+                snapshot.is_generating or provider.is_thinking_status(response.last_status)
             ):
                 response.last_status = snapshot.status
                 self.response_changed.emit(snapshot.status, response.last_text)
@@ -1104,7 +1152,7 @@ class BrowserMonitor(QThread):
                 response.completion_candidate_at = None
         if text_changed:
             logger.debug(
-                "ChatGPT response text changed "
+                "Response text changed "
                 f"characters={len(snapshot.text)} "
                 f"generating={snapshot.is_generating} "
                 f"completion_controls={snapshot.has_completion_controls}"
@@ -1135,7 +1183,7 @@ class BrowserMonitor(QThread):
             if response.completion_candidate_at is None:
                 response.completion_candidate_at = now
                 logger.debug(
-                    "ChatGPT response completion candidate started "
+                    "Response completion candidate started "
                     f"characters={len(snapshot.text)}"
                 )
         else:
@@ -1164,7 +1212,7 @@ class BrowserMonitor(QThread):
 
         if not self._use_browser_voice:
             logger.info(
-                "ChatGPT response is stable; handing reply to local voice "
+                "Response is stable; handing reply to local voice "
                 f"characters={len(snapshot.text)}"
             )
             # Reserve subtitle visibility while local synthesis prepares its
@@ -1179,11 +1227,14 @@ class BrowserMonitor(QThread):
             return
 
         logger.info(
-            "ChatGPT response is stable; attempting Read aloud "
+            "Response is stable; attempting Read aloud "
             f"characters={len(snapshot.text)} "
             f"stable_seconds={text_stable_for:.2f}"
         )
-        read_aloud_clicked = self.provider.click_read_aloud(response.page)
+        read_aloud_clicked = (
+            Capability.READ_ALOUD in provider.capabilities
+            and provider.click_read_aloud(response.page)
+        )
         if read_aloud_clicked:
             state.active_reading = _ActiveReading(
                 page=response.page,
@@ -1305,7 +1356,7 @@ class BrowserMonitor(QThread):
             return
 
         logger.info(
-            "ChatGPT Read aloud finished "
+            "Read aloud finished "
             f"media_detected={reading.audio_seen}"
         )
         self.reading_finished.emit(True, "Read aloud complete")
@@ -1322,7 +1373,7 @@ class BrowserMonitor(QThread):
                 if (
                     str(id(page)) == tab_id
                     and not page.is_closed()
-                    and self.provider.matches_url(page.url)
+                    and is_supported_url(page.url)
                 ):
                     return page
             except playwright_error:

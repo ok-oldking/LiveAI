@@ -335,7 +335,7 @@ class LocalSpeechThreadTests(unittest.TestCase):
 
         controller.window = Mock()
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller._handle_send_requested("Next question", None)
         next_worker = _QueuedLocalSpeechThread(Mock(), "model", "speaker", "en")
         controller._local_speech_thread = next_worker
@@ -598,7 +598,7 @@ class LocalSpeechThreadTests(unittest.TestCase):
         thinking = _ResponseSnapshot(False, True, False, "", "正在思考")
         reply = _ResponseSnapshot(True, False, True, "好了。", "Finishing reply…")
         with (
-            patch.object(monitor.provider, "response_snapshot", side_effect=[thinking, thinking, reply, reply]),
+            patch.object(monitor.default_provider, "response_snapshot", side_effect=[thinking, thinking, reply, reply]),
             patch("live_gpt.browser.time.monotonic", return_value=100) as clock,
         ):
             monitor._poll_active_response(state)
@@ -644,7 +644,7 @@ class LocalSpeechThreadTests(unittest.TestCase):
                 controller.config = {"playing_backend": "sovits"}
                 controller.window = Mock()
                 controller.browser_monitor = Mock()
-                controller.selected_chatgpt_tab_id = "selected-tab"
+                controller.selected_chat_tab_id = "selected-tab"
                 worker = _QueuedLocalSpeechThread(Mock(), "model", "speaker", "auto")
                 controller._local_speech_thread = worker
                 controller._on_response_update(status, "")
@@ -699,7 +699,7 @@ class LocalSpeechThreadTests(unittest.TestCase):
                 monitor.local_voice_announcement.connect(controller._speak_local_announcement)
                 monitor.response_finished.connect(controller._on_response_finished)
                 state = _MonitorState(active_response=_ActiveResponse(page=Mock(), turn_marker_before=None, started_at=0))
-                with patch.object(monitor.provider, "response_snapshot", return_value=_ResponseSnapshot(False, True, False, "", "正在思考")), patch("live_gpt.browser.time.monotonic") as clock:
+                with patch.object(monitor.default_provider, "response_snapshot", return_value=_ResponseSnapshot(False, True, False, "", "正在思考")), patch("live_gpt.browser.time.monotonic") as clock:
                     for moment in (0, 60, 120, 600):
                         clock.return_value = moment
                         monitor._poll_active_response(state)
@@ -707,7 +707,7 @@ class LocalSpeechThreadTests(unittest.TestCase):
                     worker.run()
                 self.assertEqual([call.args[1] for call in manager.synthesize_stream.call_args_list], [error])
                 controller._on_local_speech_completed(True, "Playback complete")
-                controller.window.finish_reading.assert_called_once_with(False, "Timed out while waiting for ChatGPT's reply")
+                controller.window.finish_reading.assert_called_once_with(False, "Timed out while waiting for a reply")
 
     def test_local_send_error_is_spoken_without_hiding_preserved_prompt(self) -> None:
         from live_gpt.localization import localization
@@ -719,7 +719,7 @@ class LocalSpeechThreadTests(unittest.TestCase):
         controller.window = Mock()
         controller._local_speech_thread = None
         controller._local_tts_configuration = Mock(return_value=(Mock(), "model", "speaker", "auto"))
-        message = "Could not send to ChatGPT: Screenshot upload failed"
+        message = "Could not send: Screenshot upload failed"
         with patch.object(_QueuedLocalSpeechThread, "start"):
             controller._on_send_finished(False, "Keep my prompt", message)
         worker = controller._local_speech_thread
@@ -737,7 +737,7 @@ class LocalSpeechThreadTests(unittest.TestCase):
         controller._local_speech_thread = worker
         worker.finish_queue()
         controller._local_tts_configuration = Mock(return_value=(Mock(), "model", "speaker", "auto"))
-        message = "Timed out while waiting for ChatGPT's reply"
+        message = "Timed out while waiting for a reply"
         controller._speak_local_announcement(message)
         controller._on_response_finished(False, message)
         with patch.object(_QueuedLocalSpeechThread, "start"):
@@ -763,7 +763,7 @@ class LocalSpeechThreadTests(unittest.TestCase):
                 controller._local_speech_thread = None
                 controller._local_tts_configuration = Mock(return_value=(Mock(), "model", "speaker", "auto"))
                 message = (
-                    "Could not send to ChatGPT: Locator.click: Timeout 15000ms exceeded.\n"
+                    "Could not send: Locator.click: Timeout 15000ms exceeded.\n"
                     "Call log:\n  - waiting for locator(\"form[data-thread-find-composer]\")\n"
                     "  - waiting for element to be visible, enabled and stable"
                 )
@@ -879,7 +879,7 @@ class ReplyDisplayTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.window = OverlayWindow()
-        self.window.set_chatgpt_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
+        self.window.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
         self.window.show()
         self.window.begin_response_display("Question")
         self.window.set_response_update("Writing…", "Results\nRead these docs.\nName\tValue\nOne\t2")
@@ -1530,13 +1530,13 @@ class TrayControllerBrowserTests(unittest.TestCase):
     def test_tab_selection_updates_background_focus_and_disconnect_clears_it(self):
         controller = TrayController.__new__(TrayController)
         controller.browser_monitor = Mock()
-        controller._select_chatgpt_tab("chosen-tab")
-        self.assertEqual(controller.selected_chatgpt_tab_id, "chosen-tab")
+        controller._select_chat_tab("chosen-tab")
+        self.assertEqual(controller.selected_chat_tab_id, "chosen-tab")
         controller.browser_monitor.request_focus_tab.assert_called_once_with("chosen-tab")
-        controller._set_chatgpt_connection(True)
+        controller._set_chat_connection(True)
         self.assertEqual(controller.browser_monitor.request_focus_tab.call_count, 1)
-        controller._set_chatgpt_connection(False)
-        self.assertIsNone(controller.selected_chatgpt_tab_id)
+        controller._set_chat_connection(False)
+        self.assertIsNone(controller.selected_chat_tab_id)
         controller.browser_monitor.request_focus_tab.assert_called_with(None)
 
     def test_exit_keeps_ui_responsive_until_all_workers_stop(self) -> None:
@@ -1655,11 +1655,11 @@ class TrayControllerBrowserTests(unittest.TestCase):
         application = QApplication.instance() or QApplication([])
         window = OverlayWindow()
         try:
-            window.set_chatgpt_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com/"}])
+            window.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com/"}])
             window.show()
             window._shutting_down = True
             window.hide()
-            window.set_chatgpt_tabs([])
+            window.set_chat_tabs([])
             window.show_for_auto_hide()
             application.processEvents()
             self.assertTrue(window.isHidden())
@@ -1824,7 +1824,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
     def test_chrome_is_transparent_outside_and_visible_while_resizing(self) -> None:
         window = OverlayWindow()
         try:
-            window.set_chatgpt_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
+            window.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
             window._set_chrome_visible(False)
             self.assertEqual(window._title_opacity.opacity(), 0.0)
             self.assertEqual(window._microphone_opacity.opacity(), 0.0)
@@ -1890,7 +1890,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.config = {"capture_cursor": True}
         controller.window = Mock()
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
 
         controller._handle_send_requested("Explain this", source)
 
@@ -1912,7 +1912,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller = TrayController.__new__(TrayController)
         controller.window = Mock()
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
 
         controller._handle_clear_requested()
 
@@ -1920,7 +1920,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             "selected-tab"
         )
         controller.window.set_status.assert_called_once_with(
-            "Clearing ChatGPT input…"
+            "Clearing the input…"
         )
 
     def test_reading_uses_two_dedicated_subtitle_labels(self) -> None:
@@ -2186,13 +2186,13 @@ class TrayControllerBrowserTests(unittest.TestCase):
         application = QApplication.instance() or QApplication([])
         window = OverlayWindow()
         try:
-            window.set_chatgpt_tabs([])
+            window.set_chat_tabs([])
             window.set_debug_connection(True)
-            self.assertEqual(window.chatgpt_tab_combo.itemText(0), "Debugger connected — waiting for chat")
-            self.assertIn("LiveAI opens chatgpt.com in a new tab", window.chatgpt_tab_combo.toolTip())
+            self.assertEqual(window.chat_tab_combo.itemText(0), "Debugger connected — waiting for chat")
+            self.assertIn("LiveAI opens chatgpt.com in a new tab", window.chat_tab_combo.toolTip())
             self.assertTrue(window.remote_debugging_button.isHidden())
-            window.set_browser_status("Could not open ChatGPT tab: Creation failed")
-            self.assertEqual(window.chatgpt_tab_combo.toolTip(), "Could not open ChatGPT tab: Creation failed")
+            window.set_browser_status("Could not open a chat tab: Creation failed")
+            self.assertEqual(window.chat_tab_combo.toolTip(), "Could not open a chat tab: Creation failed")
         finally:
             window.close()
 
@@ -2244,7 +2244,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             self.assertEqual(window.error_banner.toPlainText(), message)
             self.assertTrue(window.error_banner.isReadOnly())
             self.assertTrue(window._pet_error)
-            window.set_status("Sent to ChatGPT")
+            window.set_status("Sent")
             self.assertTrue(window.error_banner.isHidden())
         finally:
             window.close()
@@ -2520,7 +2520,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
                     application.processEvents()
                     pet_rect = QRect(window.pet.mapTo(window, QPoint()), window.pet.size())
                     self.assertTrue(window.rect().contains(pet_rect))
-                    window.set_status("Sent to ChatGPT")
+                    window.set_status("Sent")
                     self.assertTrue(window.error_banner.isHidden())
                 finally:
                     window.close()
@@ -2743,13 +2743,13 @@ class TrayControllerBrowserTests(unittest.TestCase):
         window = OverlayWindow()
         selected_tabs: list[str] = []
         preferences: list[str] = []
-        window.chatgpt_tab_selected.connect(selected_tabs.append)
-        window.chatgpt_preference_changed.connect(preferences.append)
+        window.chat_tab_selected.connect(selected_tabs.append)
+        window.chat_preference_changed.connect(preferences.append)
         try:
-            window.set_preferred_chatgpt_window(
+            window.set_preferred_chat_window(
                 "https://chatgpt.com/c/second"
             )
-            window.set_chatgpt_tabs(
+            window.set_chat_tabs(
                 [
                     {
                         "id": "first",
@@ -2764,11 +2764,11 @@ class TrayControllerBrowserTests(unittest.TestCase):
                 ]
             )
 
-            self.assertEqual(window.chatgpt_tab_combo.currentData(), "second")
+            self.assertEqual(window.chat_tab_combo.currentData(), "second")
             self.assertEqual(selected_tabs, ["second"])
             self.assertEqual(preferences, [])
 
-            window.chatgpt_tab_combo.setCurrentIndex(0)
+            window.chat_tab_combo.setCurrentIndex(0)
             self.assertEqual(
                 preferences,
                 ["https://chatgpt.com/c/first"],
@@ -2792,7 +2792,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             lambda text, selected: requests.append((text, selected))
         )
         try:
-            window.set_chatgpt_tabs(
+            window.set_chat_tabs(
                 [
                     {
                         "id": "tab",
@@ -2843,7 +2843,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             lambda text, selected: requests.append((text, selected))
         )
         try:
-            window.set_chatgpt_tabs(
+            window.set_chat_tabs(
                 [{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}]
             )
             window.set_capture_sources([source])
@@ -2878,7 +2878,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
     def test_auto_hide_reveals_for_activity_and_hides_afterwards(self, _cursor) -> None:
         window = OverlayWindow()
         try:
-            window.set_chatgpt_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
+            window.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
             window.show()
             window.auto_hide_button.click()
             QApplication.processEvents()
@@ -2915,7 +2915,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         try:
             window.begin_response_display()
             window.set_response_update(
-                "ChatGPT is responding…", "First sentence. Second sentence"
+                "Responding…", "First sentence. Second sentence"
             )
             window.begin_reading("Playing with streaming GPT-SoVITS…")
             window.set_reading_subtitle(
@@ -2927,7 +2927,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             )
 
             longer = "First sentence. Second sentence is still growing."
-            window.set_response_update("ChatGPT is responding…", longer)
+            window.set_response_update("Responding…", longer)
             window.set_response_finished(True, "Reply complete · Local voice queued")
 
             self.assertTrue(window._subtitle_reading_active)
@@ -2943,7 +2943,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
     def test_auto_hide_waits_while_unsent_dictation_is_present(self) -> None:
         window = OverlayWindow()
         try:
-            window.set_chatgpt_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
+            window.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
             window.show()
             window.set_transcript("Unsent dictated text")
 
@@ -2978,7 +2978,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             lambda text, selected: requests.append((text, selected))
         )
         try:
-            window.set_chatgpt_tabs(
+            window.set_chat_tabs(
                 [{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}]
             )
             window.set_capture_sources([source])
@@ -2997,7 +2997,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         focus_restorer.restore_previous.return_value = True
         window._focus_restorer = focus_restorer
         try:
-            window.set_chatgpt_tabs(
+            window.set_chat_tabs(
                 [{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}]
             )
             window.set_transcript("Send from overlay")
@@ -3048,7 +3048,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.window = Mock()
         controller.window.transcript_area.is_showing_response = False
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller.dictation_tab_id = None
 
         controller.start_dictation()
@@ -3063,7 +3063,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.browser_monitor.request_start_dictation.assert_called_once_with(
             "selected-tab"
         )
-        controller.window.clear_transcript.assert_called_once_with()
+        controller.window.prepare_for_dictation.assert_called_once_with()
         controller.browser_monitor.request_finish_dictation.assert_called_once_with(
             "selected-tab"
         )
@@ -3116,7 +3116,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
             release_source
         )
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller.dictation_tab_id = "selected-tab"
         controller._dictation_state = "starting"
         controller._browser_dictation_start_requested = False
@@ -3161,7 +3161,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.window = Mock()
         controller.browser_monitor = Mock()
         controller.config = {"capture_cursor": False}
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller.dictation_tab_id = None
         controller.window.capture_source_combo.currentData.return_value = CaptureSource(
             key="display:1", label="Desktop", kind="display",
@@ -3185,7 +3185,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         callback = single_shot.call_args.args[1]
         # Tab selection can change during preparation; attach to the tab
         # this recording started on.
-        controller.selected_chatgpt_tab_id = "different-tab"
+        controller.selected_chat_tab_id = "different-tab"
         callback()
         callback()
         capture.assert_called_once()
@@ -3204,7 +3204,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.window = Mock()
         controller.browser_monitor = Mock()
         controller.config = {"capture_cursor": False}
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller.dictation_tab_id = None
         controller.window.capture_source_combo.currentData.return_value = CaptureSource(
             key="display:1", label="Desktop", kind="display",
@@ -3225,7 +3225,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller = TrayController.__new__(TrayController)
         controller.window = Mock()
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller.dictation_tab_id = None
         controller.window.capture_source_combo.currentData.return_value = CaptureSource(
             key="display:1", label="Desktop", kind="display",
@@ -3243,7 +3243,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.window = Mock()
         controller.browser_monitor = Mock()
         controller.config = {"capture_cursor": False}
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller.dictation_tab_id = "local"
         controller._dictation_press_generation = 1
         controller._dictation_input_held = True
@@ -3264,7 +3264,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.window = Mock()
         controller.window.transcript_area.is_showing_response = False
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller.dictation_tab_id = None
         controller._dictation_state = "idle"
         controller._dictation_input_held = False
@@ -3284,7 +3284,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.window = Mock()
         controller.window.transcript_area.is_showing_response = False
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller.dictation_tab_id = None
         controller._dictation_state = "idle"
         controller._dictation_input_held = False
@@ -3330,7 +3330,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller = TrayController.__new__(TrayController)
         controller.window = Mock()
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller._dictation_press_generation = 3
         controller._dictation_input_held = True
         controller._dictation_state = "listening"
@@ -3346,7 +3346,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller = TrayController.__new__(TrayController)
         controller.window = Mock()
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller._dictation_press_generation = 2
         controller._dictation_input_held = False
         controller._dictation_state = "cancelling"
@@ -3361,7 +3361,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.window = Mock()
         controller.window.transcript_area.is_showing_response = False
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller.dictation_tab_id = None
         controller._dictation_state = "idle"
         controller._dictation_input_held = False
@@ -3385,7 +3385,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.browser_monitor = Mock()
         cancelled = threading.Event()
         controller.browser_monitor.request_start_dictation.return_value = cancelled
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller.dictation_tab_id = None
         controller._dictation_state = "idle"
         controller._dictation_input_held = False
@@ -3407,7 +3407,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.browser_monitor = Mock()
         cancelled = threading.Event()
         controller.browser_monitor.request_start_dictation.return_value = cancelled
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller.dictation_tab_id = None
         controller.start_dictation(include_screenshot=False)
         controller.finish_dictation()
@@ -3422,7 +3422,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.window = Mock()
         controller.window.transcript_area.is_showing_response = False
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller.dictation_tab_id = None
         controller._dictation_state = "idle"
         controller._dictation_input_held = False
@@ -3450,14 +3450,14 @@ class TrayControllerBrowserTests(unittest.TestCase):
             self.assertFalse(window.transcript_area.isEnabled())
             self.assertFalse(window.microphone_button.isEnabled())
 
-            window.set_chatgpt_tabs(
+            window.set_chat_tabs(
                 [{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}]
             )
 
             self.assertTrue(window.transcript_area.isEnabled())
             self.assertTrue(window.microphone_button.isEnabled())
 
-            window.set_chatgpt_tabs([])
+            window.set_chat_tabs([])
 
             self.assertFalse(window.transcript_area.isEnabled())
             self.assertFalse(window.microphone_button.isEnabled())
@@ -3471,7 +3471,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller._on_dictation_finished(
             True,
             "Text recognized by ChatGPT",
-            "Dictation copied from ChatGPT",
+            "Dictation copied",
         )
 
         controller.window.set_transcript.assert_called_once_with(
@@ -3480,7 +3480,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller.window.end_dictation_display.assert_called_once_with()
         controller.window.set_microphone_state.assert_called_once_with(
             "saved",
-            "Dictation copied from ChatGPT",
+            "Dictation copied",
         )
         controller.window.show_for_auto_hide.assert_called_once_with()
         controller.window.schedule_auto_hide.assert_not_called()
@@ -3493,7 +3493,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller._on_dictation_finished(
             True,
             "Text recognized by ChatGPT",
-            "Dictation copied from ChatGPT",
+            "Dictation copied",
         )
 
         controller.window.set_transcript.assert_called_once_with(
@@ -3544,7 +3544,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller._on_dictation_finished(
             True,
             "A",
-            "Dictation copied from ChatGPT",
+            "Dictation copied",
         )
 
         controller.window.set_transcript.assert_called_once_with("A")
@@ -3570,7 +3570,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller = TrayController.__new__(TrayController)
         controller.window = Mock()
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller._dictation_input_held = False
 
         controller._on_dictation_finished(True, "　 好 \n", "Finished")
@@ -3587,7 +3587,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller = TrayController.__new__(TrayController)
         controller.window = Mock()
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
 
         controller._handle_send_requested(" \nHello  world\nSecond line\t ", None)
 
@@ -3599,7 +3599,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller = TrayController.__new__(TrayController)
         controller.window = Mock()
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
         controller._short_voice_text = "A"
 
         controller._handle_send_requested("A", None)
@@ -3615,7 +3615,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller = TrayController.__new__(TrayController)
         controller.window = Mock()
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "selected-tab"
+        controller.selected_chat_tab_id = "selected-tab"
 
         controller._handle_send_requested("A", None)
 
@@ -3647,7 +3647,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         screen = Mock()
         screen.availableGeometry.return_value = bounds
         try:
-            window.set_chatgpt_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
+            window.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
             window.setGeometry(3246, 1808, 1619, 306)
             window.auto_hide_button.setChecked(True)
             window.hide()
@@ -3716,7 +3716,7 @@ class TrayControllerBrowserTests(unittest.TestCase):
         controller._on_dictation_finished(
             True,
             "",
-            "Dictation copied from ChatGPT",
+            "Dictation copied",
         )
 
         controller.window.show_for_auto_hide.assert_not_called()

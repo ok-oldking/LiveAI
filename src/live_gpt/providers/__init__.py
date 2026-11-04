@@ -1,8 +1,8 @@
 """Chat website adapters. Add a site by implementing ChatProvider and
-registering it in PROVIDERS."""
+registering its class in PROVIDERS."""
 from __future__ import annotations
 
-from typing import Callable
+from urllib.parse import urlparse
 
 from .base import (
     Capability,
@@ -15,9 +15,9 @@ from .base import (
 )
 from .chatgpt import ChatGPTProvider
 
-ProviderFactory = Callable[[ProviderContext | None], ChatProvider]
-
-PROVIDERS: dict[str, ProviderFactory] = {
+# Classes, not instances: id, display_name, home_url and matches_url are
+# class-level so the relay and UI can use them without a page context.
+PROVIDERS: dict[str, type[ChatProvider]] = {
     ChatGPTProvider.id: ChatGPTProvider,
 }
 DEFAULT_PROVIDER_ID = ChatGPTProvider.id
@@ -28,10 +28,30 @@ def create_provider(
     context: ProviderContext | None = None,
 ) -> ChatProvider:
     try:
-        factory = PROVIDERS[provider_id]
+        provider_class = PROVIDERS[provider_id]
     except KeyError:
         raise ValueError(f"Unknown chat provider: {provider_id!r}") from None
-    return factory(context)
+    return provider_class(context)
+
+
+def provider_id_for_url(url: str) -> str | None:
+    """Return the registered provider that owns a page URL, if any."""
+    for provider_id, provider_class in PROVIDERS.items():
+        try:
+            if provider_class.matches_url(url):
+                return provider_id
+        except Exception:
+            continue
+    return None
+
+
+def is_supported_url(url: str) -> bool:
+    return provider_id_for_url(url) is not None
+
+
+def provider_site(provider_id: str = DEFAULT_PROVIDER_ID) -> str:
+    """Return the host shown to users, such as chatgpt.com."""
+    return urlparse(PROVIDERS[provider_id].home_url).hostname or ""
 
 
 __all__ = [
@@ -46,4 +66,7 @@ __all__ = [
     "ResponseSnapshot",
     "UsageLimitError",
     "create_provider",
+    "is_supported_url",
+    "provider_id_for_url",
+    "provider_site",
 ]

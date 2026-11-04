@@ -12,7 +12,7 @@ from playwright.sync_api import Error as PlaywrightError, sync_playwright, Timeo
 from websockets.asyncio.server import serve
 from websockets.sync.client import connect
 
-from live_gpt.cdp_bridge import ChatGPTCDPBridge, _TargetFilter
+from live_gpt.cdp_bridge import CDPBridge, _TargetFilter
 from live_gpt.browser import BrowserMonitor, _MonitorState
 from unittest.mock import patch
 
@@ -38,6 +38,19 @@ class TargetFilterTests(unittest.TestCase):
         self.assertTrue(forward)
         self.assertEqual(len(commands), 1)
         self.assertEqual(commands[0]["params"]["targetId"], "existing")
+
+    def test_url_filter_decides_which_pages_attach(self):
+        targets = _TargetFilter(lambda url: url.startswith("https://chat.example/"))
+        self.enable_page_attachments(targets)
+        for url, attaches in (
+            ("https://chat.example/c/1", True),
+            ("https://chatgpt.com/c/1", False),
+        ):
+            with self.subTest(url=url):
+                _, commands = targets.receive({"method": "Target.targetCreated", "params": {
+                    "targetInfo": {"targetId": url, "type": "page", "url": url},
+                }})
+                self.assertEqual(bool(commands), attaches)
 
     def test_attachment_reply_before_event_does_not_trigger_a_second_attachment(self):
         targets = _TargetFilter()
@@ -151,7 +164,7 @@ class BridgeLifecycleTests(unittest.TestCase):
             async with serve(lambda connection: connection.wait_closed(), "127.0.0.1", 0,
                              process_request=delayed_approval, close_timeout=1,
                              logger=logging.getLogger("cdp-delayed-approval-test")) as upstream:
-                bridge = ChatGPTCDPBridge(f"ws://127.0.0.1:{upstream.sockets[0].getsockname()[1]}")
+                bridge = CDPBridge(f"ws://127.0.0.1:{upstream.sockets[0].getsockname()[1]}")
                 endpoint = bridge.start()
                 downstream = await asyncio.to_thread(connect, endpoint)
                 try:
@@ -183,7 +196,7 @@ class BridgeBrowserTests(unittest.TestCase):
                 body="<title>ChatGPT test</title><p>New conversation</p>",
             ))
             original = context.pages[0]
-            bridge = ChatGPTCDPBridge(f"http://127.0.0.1:{port}")
+            bridge = CDPBridge(f"http://127.0.0.1:{port}")
             try:
                 connected = playwright.chromium.connect_over_cdp(
                     bridge.start(), no_defaults=True, timeout=5_000,
@@ -217,7 +230,7 @@ class BridgeBrowserTests(unittest.TestCase):
                 channel=os.environ["LIVE_GPT_TEST_BROWSER"], headless=True,
                 args=[f"--remote-debugging-port={port}"],
             )
-            bridge = ChatGPTCDPBridge(f"http://127.0.0.1:{port}")
+            bridge = CDPBridge(f"http://127.0.0.1:{port}")
             try:
                 context = native.new_context()
                 context.route("https://chatgpt.com/**", lambda route: route.fulfill(body="<p>Focus test</p>"))
@@ -267,7 +280,7 @@ class BridgeBrowserTests(unittest.TestCase):
                 expected = {f"https://chatgpt.com/c/churn-{index}" for index in range(4)}
                 for attempt in range(5):
                     with self.subTest(attempt=attempt):
-                        bridge = ChatGPTCDPBridge(f"http://127.0.0.1:{port}")
+                        bridge = CDPBridge(f"http://127.0.0.1:{port}")
                         try:
                             connected = playwright.chromium.connect_over_cdp(
                                 bridge.start(), no_defaults=True, timeout=5_000,
@@ -299,7 +312,7 @@ class BridgeBrowserTests(unittest.TestCase):
                 channel=os.environ["LIVE_GPT_TEST_BROWSER"], headless=True,
                 args=[f"--remote-debugging-port={port}"],
             )
-            bridge = ChatGPTCDPBridge(f"http://127.0.0.1:{port}")
+            bridge = CDPBridge(f"http://127.0.0.1:{port}")
             try:
                 context = browser.new_context()
                 context.route("https://chatgpt.com/**", lambda route: route.fulfill(

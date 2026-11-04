@@ -221,7 +221,7 @@ class ChatGPTProvider:
         while True:
             remaining = int((deadline - time.monotonic()) * 1000)
             if remaining <= 0:
-                raise RuntimeError("ChatGPT's send button did not become ready")
+                raise RuntimeError("The send button did not become ready")
             clicked = send_button.evaluate("""button => {
                 if (!button.isConnected || !button.getClientRects().length
                     || getComputedStyle(button).visibility !== 'visible'
@@ -409,7 +409,7 @@ class ChatGPTProvider:
             'input[type="file"][accept*="image"], input[type="file"]'
         )
         if int(file_inputs.count()) == 0:
-            raise RuntimeError("ChatGPT's image input was not found")
+            raise RuntimeError("The image input was not found")
         file_inputs.last.set_input_files(
             {
                 "name": "live-gpt-screenshot.webp",
@@ -458,7 +458,7 @@ class ChatGPTProvider:
                 if text is not None and ready:
                     return False
             page.wait_for_timeout(100)
-        raise RuntimeError("ChatGPT's dictation control is not ready")
+        raise RuntimeError("The dictation control is not ready")
 
     def start_dictation(self, page: Any) -> None:
         self._context.check_dictation_start_cancelled()
@@ -467,7 +467,7 @@ class ChatGPTProvider:
         )
         self._context.check_dictation_start_cancelled()
         if button is None:
-            raise RuntimeError("ChatGPT's dictation microphone was not found")
+            raise RuntimeError("The dictation microphone was not found")
         self._click_dictation_control(page, button, starting=True)
 
         end_button = self._first_visible_locator(
@@ -479,7 +479,7 @@ class ChatGPTProvider:
         if end_button is None:
             if self._context.stop_requested():
                 raise RuntimeError("Dictation cancelled")
-            raise RuntimeError("ChatGPT did not start listening")
+            raise RuntimeError("The browser did not start listening")
 
     def cancel_existing_dictation(self, page: Any, *, starting: bool = False) -> bool:
         """Return ChatGPT to an idle composer before starting a new session."""
@@ -499,7 +499,7 @@ class ChatGPTProvider:
             logger.debug("ChatGPT dictation returned to idle while waiting for cancellation")
             return False
         if not self._wait_for_dictation_controls_hidden(page):
-            raise RuntimeError("ChatGPT's stale dictation did not cancel")
+            raise RuntimeError("The previous dictation did not cancel")
         return True
 
     def cancel_dictation(
@@ -521,9 +521,9 @@ class ChatGPTProvider:
         if button is not None:
             self._click_dictation_control(page, button)
             if not self._wait_for_dictation_controls_hidden(page):
-                raise RuntimeError("ChatGPT's dictation did not cancel")
+                raise RuntimeError("Dictation did not cancel")
         elif not self._context.stop_requested():
-            raise RuntimeError("ChatGPT's dictation Cancel button was not found")
+            raise RuntimeError("The dictation Cancel button was not found")
 
         composer = page.locator(CHATGPT_COMPOSER_SELECTOR).first
         composer.wait_for(state="visible", timeout=5_000)
@@ -555,7 +555,7 @@ class ChatGPTProvider:
         if button is None:
             if self._context.stop_requested():
                 return initial_text
-            raise RuntimeError("ChatGPT's dictation Done button was not found")
+            raise RuntimeError("The dictation Done button was not found")
         self._click_dictation_control(page, button)
 
         initial_text = initial_text.strip()
@@ -695,7 +695,7 @@ class ChatGPTProvider:
         if isinstance(live_labels, list):
             for label in reversed(live_labels):
                 status = cls._response_activity_status(str(label), True)
-                if status != "ChatGPT is responding…":
+                if status != "Responding…":
                     live_status = status
                     break
         # These are explicitly rendered activity labels, not arbitrary reply
@@ -707,7 +707,7 @@ class ChatGPTProvider:
                     break
         is_generating = is_generating or bool(live_status)
         waiting_status = live_status or (
-            "ChatGPT is responding…" if is_generating else "Waiting for ChatGPT…"
+            "Responding…" if is_generating else "Waiting for a reply…"
         )
 
         if turn_count == 0:
@@ -773,7 +773,7 @@ class ChatGPTProvider:
             is_generating=is_generating,
             has_completion_controls=int(completion_controls.count()) > 0,
             text=text,
-            status=live_status or ("ChatGPT is responding…" if is_generating else "Finishing reply…"),
+            status=live_status or ("Responding…" if is_generating else "Finishing reply…"),
             links=links,
             html=reply_html,
         )
@@ -839,7 +839,7 @@ class ChatGPTProvider:
                 and any(word in label.casefold() for word in activity_words)
             ):
                 return label
-        return "ChatGPT is responding…"
+        return "Responding…"
 
     # ------------------------------------------------------------------
     # Read aloud

@@ -1,24 +1,27 @@
-"""Expose ChatGPT CDP targets without initializing unrelated browser tabs."""
+"""Expose supported chat CDP targets without initializing unrelated browser tabs."""
 from __future__ import annotations
 
 import asyncio
 import json
 import threading
 import urllib.request
-from typing import Any
+from typing import Any, Callable
 
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
-from .browser_discovery import is_chatgpt_url
 from .logger import Logger
+from .providers import is_supported_url
 
 logger = Logger.get_logger(__name__)
 
+UrlFilter = Callable[[str], bool]
+
 
 class _TargetFilter:
-    def __init__(self) -> None:
+    def __init__(self, url_filter: UrlFilter = is_supported_url) -> None:
+        self._url_filter = url_filter
         self._next_id = -1
         self._internal: dict[int, str | None] = {}
         self._ignored_sessions: set[str] = set()
@@ -47,7 +50,7 @@ class _TargetFilter:
     def _attach_page(self, target: dict) -> list[dict]:
         target_id = target["targetId"]
         if (self._page_attachments_enabled and target.get("type") == "page"
-                and is_chatgpt_url(target.get("url", ""))
+                and self._url_filter(target.get("url", ""))
                 and target_id not in self._attached and target_id not in self._attaching):
             return [self.command("Target.attachToTarget", {"targetId": target_id, "flatten": True})]
         return []
@@ -90,7 +93,7 @@ class _TargetFilter:
                     return False, []
                 self._ignored_sessions.add(session_id)
                 return False, [self.command("Target.detachFromTarget", {"sessionId": session_id})]
-            if target.get("type") == "page" and not is_chatgpt_url(target.get("url", "")):
+            if target.get("type") == "page" and not self._url_filter(target.get("url", "")):
                 self._ignored_sessions.add(session_id)
                 # Auto-attach pauses new pages. Resume them before detaching;
                 # never navigate, reload, or close the user's unrelated tabs.
@@ -122,18 +125,19 @@ class _TargetFilter:
         return True, []
 
 
-class ChatGPTCDPBridge:
+class CDPBridge:
     """Own a loopback-only relay for one Playwright browser connection."""
 
-    def __init__(self, endpoint: str) -> None:
+    def __init__(self, endpoint: str, url_filter: UrlFilter = is_supported_url) -> None:
         self.upstream_endpoint = endpoint
+        self._url_filter = url_filter
         self.endpoint = ""
         self.connected = threading.Event()
         self._ready = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stop: asyncio.Event | None = None
         self._error: Exception | None = None
-        self._thread = threading.Thread(target=self._run, name="chatgpt-cdp-bridge", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="chat-cdp-bridge", daemon=True)
 
     def start(self) -> str:
         self._thread.start()
@@ -193,7 +197,7 @@ class ChatGPTCDPBridge:
         async with connect(endpoint, proxy=None, open_timeout=None, max_size=None, close_timeout=1) as upstream:
             self.connected.set()
             logger.info("Browser approved the remote debugging connection")
-            targets = _TargetFilter()
+            targets = _TargetFilter(self._url_filter)
             await upstream.send(json.dumps(targets.command("Target.setDiscoverTargets", {"discover": True})))
 
             async def forward_requests() -> None:

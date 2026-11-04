@@ -670,9 +670,9 @@ class BrowserLocalizationTests(unittest.TestCase):
             <button data-testid="stop-button">Stop</button>
         ''')
         snapshot = ChatGPTProvider.response_snapshot(self.page, "old")
-        self.assertEqual(snapshot.status, "ChatGPT is responding…")
+        self.assertEqual(snapshot.status, "Responding…")
         self.page.locator('[data-turn-key]').evaluate('element => element.remove()')
-        self.assertEqual(ChatGPTProvider.response_snapshot(self.page, "old").status, "ChatGPT is responding…")
+        self.assertEqual(ChatGPTProvider.response_snapshot(self.page, "old").status, "Responding…")
 
     def test_failed_screenshot_is_reuploaded_before_send(self):
         from unittest.mock import patch
@@ -788,7 +788,7 @@ class BrowserLocalizationTests(unittest.TestCase):
         self.page.locator('[data-testid="stop-button"]').evaluate("element => element.remove()")
         snapshot = ChatGPTProvider.response_snapshot(self.page, "old")
         self.assertFalse(snapshot.is_generating)
-        self.assertEqual(snapshot.status, "Waiting for ChatGPT…")
+        self.assertEqual(snapshot.status, "Waiting for a reply…")
 
     def test_search_turn_never_reads_previous_reply_or_activity_markdown(self):
         from unittest.mock import patch
@@ -808,7 +808,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                     page=self.page, turn_marker_before=marker_before, started_at=90,
                 ))
                 # With only activity markdown, extraction must stay empty.
-                snapshot = monitor.provider.response_snapshot(self.page, marker_before)
+                snapshot = monitor.default_provider.response_snapshot(self.page, marker_before)
                 self.assertEqual(snapshot.text, "")
                 self.assertTrue(snapshot.is_generating)
                 with patch("live_gpt.browser.time.monotonic", return_value=100) as clock:
@@ -816,7 +816,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                     # During rerender the entire activity block can disappear,
                     # leaving the old reply as the last assistant selector match.
                     self.page.locator('[class~="group/agent-activity"]').evaluate("e => e.remove()")
-                    snapshot = monitor.provider.response_snapshot(self.page, marker_before)
+                    snapshot = monitor.default_provider.response_snapshot(self.page, marker_before)
                     self.assertFalse(snapshot.has_new_turn)
                     self.assertEqual(snapshot.text, "")
                     monitor._poll_active_response(state)
@@ -1041,10 +1041,10 @@ class BrowserLocalizationTests(unittest.TestCase):
             </form>
         ''')
         monitor = BrowserMonitor()
-        monitor.provider.start_dictation(self.page)
-        self.assertEqual(monitor.provider.finish_dictation(self.page, ""), "你好世界")
-        monitor.provider.start_dictation(self.page)
-        self.assertEqual(monitor.provider.cancel_dictation(self.page, "原文"), "原文")
+        monitor.default_provider.start_dictation(self.page)
+        self.assertEqual(monitor.default_provider.finish_dictation(self.page, ""), "你好世界")
+        monitor.default_provider.start_dictation(self.page)
+        self.assertEqual(monitor.default_provider.cancel_dictation(self.page, "原文"), "原文")
         self.assertIsNone(self.page.evaluate("window.wrongControl"))
 
     def test_screenshot_upload_starts_before_dictation_click(self):
@@ -1068,7 +1068,7 @@ class BrowserLocalizationTests(unittest.TestCase):
         </form>''')
         self.page.evaluate("window.events=[]")
         monitor = BrowserMonitor()
-        self.assertEqual(monitor.provider._screenshot_upload_state(self.page), "missing")
+        self.assertEqual(monitor.default_provider._screenshot_upload_state(self.page), "missing")
         results = []
         monitor.dictation_started.connect(lambda *args: results.append(args))
         # Page lookup uses the URL as well as the identity. Route a local
@@ -1106,7 +1106,7 @@ class BrowserLocalizationTests(unittest.TestCase):
             }, 350);
         }''')
         monitor = BrowserMonitor()
-        monitor.provider.start_dictation(self.page)
+        monitor.default_provider.start_dictation(self.page)
         self.assertEqual(self.page.evaluate("window.clickCount"), 1)
         self.assertEqual(self.page.evaluate("window.busyAtClick"), "false")
 
@@ -1133,16 +1133,16 @@ class BrowserLocalizationTests(unittest.TestCase):
         monitor.dictation_finished.connect(lambda *args: finished.append(args))
         monitor.dictation_started.connect(lambda *args: started.append(args))
         cancelled = monitor.request_start_dictation(str(id(self.page)), b"screenshot")
-        paste = monitor.provider.paste_screenshot
+        paste = monitor.default_provider.paste_screenshot
 
         def release_during_paste(page, screenshot):
             paste(page, screenshot)
             cancelled.set()
 
-        with patch.object(monitor.provider, "paste_screenshot", side_effect=release_during_paste):
+        with patch.object(monitor.default_provider, "paste_screenshot", side_effect=release_during_paste):
             monitor._process_dictation_requests(self.browser, Error)
         self.assertEqual(self.page.evaluate("window.clickCount"), 0)
-        self.assertEqual(monitor.provider._screenshot_upload_state(self.page), "missing")
+        self.assertEqual(monitor.default_provider._screenshot_upload_state(self.page), "missing")
         self.assertEqual(started, [])
         self.assertEqual(finished, [(True, "Keep this text", "Dictation cancelled")])
 
@@ -1156,7 +1156,7 @@ class BrowserLocalizationTests(unittest.TestCase):
             'this.querySelector(\'[data-composer-markdown]\').textContent=\'\'; return false">'
             + footer + '<button type="button" aria-label="Stop dictation" hidden>Stop</button></form>')
         monitor = BrowserMonitor()
-        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), (expected, True))
+        self.assertEqual(monitor.default_provider._dictation_result_snapshot(self.page), (expected, True))
         self.page.evaluate('''() => {
             window.sendCount = 0;
             const editor = document.querySelector('[data-composer-markdown]');
@@ -1175,13 +1175,13 @@ class BrowserLocalizationTests(unittest.TestCase):
             };
         }''')
         with patch.object(self.page, "wait_for_timeout", wraps=self.page.wait_for_timeout) as wait:
-            text = monitor.provider.finish_dictation(self.page, "")
+            text = monitor.default_provider.finish_dictation(self.page, "")
         self.assertEqual(text, expected)
         self.assertEqual(wait.call_count, 3)
-        monitor.provider.send(self.page, text, preserve_attachments=True)
+        monitor.default_provider.send(self.page, text, preserve_attachments=True)
         self.assertEqual(self.page.evaluate("window.sendCount"), 1)
         self.assertEqual(self.page.evaluate("window.sentText"), expected)
-        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), ("", True))
+        self.assertEqual(monitor.default_provider._dictation_result_snapshot(self.page), ("", True))
 
     def test_empty_dictation_finishes_when_idle_microphone_returns(self):
         from unittest.mock import patch
@@ -1197,7 +1197,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                 </form>''')
                 monitor = BrowserMonitor()
                 with patch.object(self.page, "wait_for_timeout", wraps=self.page.wait_for_timeout) as wait:
-                    self.assertEqual(monitor.provider.finish_dictation(self.page, ""), "")
+                    self.assertEqual(monitor.default_provider.finish_dictation(self.page, ""), "")
                 self.assertEqual(wait.call_count, 2)
 
     def test_dictation_snapshot_waits_for_processing_and_ignores_hidden_controls(self):
@@ -1208,18 +1208,18 @@ class BrowserLocalizationTests(unittest.TestCase):
             <button aria-label="Stop dictation" hidden>Stop</button>
         </form>''')
         monitor = BrowserMonitor()
-        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), ("", False))
+        self.assertEqual(monitor.default_provider._dictation_result_snapshot(self.page), ("", False))
         mic = self.page.locator('button[aria-label="Dictate"]')
         mic.evaluate("button => { button.setAttribute('aria-busy', 'false'); button.disabled=true; }")
-        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), ("", False))
+        self.assertEqual(monitor.default_provider._dictation_result_snapshot(self.page), ("", False))
         mic.evaluate("button => { button.disabled=false; button.setAttribute('aria-disabled', 'true'); }")
-        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), ("", False))
+        self.assertEqual(monitor.default_provider._dictation_result_snapshot(self.page), ("", False))
         mic.evaluate("button => button.removeAttribute('aria-disabled')")
-        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), ("", True))
+        self.assertEqual(monitor.default_provider._dictation_result_snapshot(self.page), ("", True))
         self.page.locator('button[aria-label="Cancel dictation"]').evaluate("button => button.hidden=false")
-        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), ("", False))
+        self.assertEqual(monitor.default_provider._dictation_result_snapshot(self.page), ("", False))
         self.page.locator('#prompt-textarea').evaluate("element => element.remove()")
-        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), (None, False))
+        self.assertEqual(monitor.default_provider._dictation_result_snapshot(self.page), (None, False))
 
     def test_pasted_dictate_button_starts_dictation_instead_of_voice_chat(self):
         controls = (Path(__file__).parent / "fixtures" / "chatgpt_dictate_controls.html").read_text(encoding="utf-8")
@@ -1256,12 +1256,12 @@ class BrowserLocalizationTests(unittest.TestCase):
                     };
                 }''')
                 monitor = BrowserMonitor()
-                monitor.provider.start_dictation(self.page)
+                monitor.default_provider.start_dictation(self.page)
                 self.assertTrue(self.page.evaluate('window.dictateClicked'))
                 self.assertFalse(self.page.evaluate('window.voiceChatClicked'))
-                self.assertEqual(monitor.provider.finish_dictation(self.page, ""), "Dictated text")
-                monitor.provider.start_dictation(self.page)
-                self.assertEqual(monitor.provider.cancel_dictation(self.page, "Original text"), "Original text")
+                self.assertEqual(monitor.default_provider.finish_dictation(self.page, ""), "Dictated text")
+                monitor.default_provider.start_dictation(self.page)
+                self.assertEqual(monitor.default_provider.cancel_dictation(self.page, "Original text"), "Original text")
                 self.assertFalse(self.page.evaluate('window.voiceChatClicked'))
 
     def test_dictation_click_returns_with_a_pending_navigation(self):
@@ -1281,8 +1281,8 @@ class BrowserLocalizationTests(unittest.TestCase):
         try:
             # Isolate the post-click navigation wait from the application's
             # separate listening check, already covered by the fixture above.
-            with patch.object(monitor.provider, '_first_visible_locator', side_effect=[microphone, Mock()]) as find:
-                monitor.provider.start_dictation(self.page)
+            with patch.object(monitor.default_provider, '_first_visible_locator', side_effect=[microphone, Mock()]) as find:
+                monitor.default_provider.start_dictation(self.page)
             self.assertEqual(find.call_args.args[1], DICTATION_END_SELECTORS)
         finally:
             # Keep the pending navigation from blocking later page operations.
@@ -1371,10 +1371,10 @@ class BrowserLocalizationTests(unittest.TestCase):
             }, 300);
         }''')
         monitor = BrowserMonitor()
-        self.assertTrue(monitor.provider.cancel_existing_dictation(self.page, starting=True))
+        self.assertTrue(monitor.default_provider.cancel_existing_dictation(self.page, starting=True))
         self.assertEqual(self.page.evaluate("window.cancelCount"), 1)
         self.assertFalse(self.page.evaluate("window.sentEarly"))
-        self.assertTrue(monitor.provider._dictation_result_snapshot(self.page)[1])
+        self.assertTrue(monitor.default_provider._dictation_result_snapshot(self.page)[1])
 
     def test_pasted_active_dictation_footer_stops_and_cancels_without_sending(self):
         from live_gpt.providers.chatgpt import DICTATION_END_SELECTORS
@@ -1422,15 +1422,15 @@ class BrowserLocalizationTests(unittest.TestCase):
             };
         }''')
         monitor = BrowserMonitor()
-        monitor.provider.start_dictation(self.page)
-        stop = monitor.provider._first_visible_locator(self.page, DICTATION_END_SELECTORS, timeout=1000)
+        monitor.default_provider.start_dictation(self.page)
+        stop = monitor.default_provider._first_visible_locator(self.page, DICTATION_END_SELECTORS, timeout=1000)
         self.assertEqual(stop.get_attribute('aria-label'), 'Stop dictation')
         self.assertEqual(
-            monitor.provider.finish_dictation(self.page, "Original text"),
+            monitor.default_provider.finish_dictation(self.page, "Original text"),
             "Original text with transcription",
         )
-        monitor.provider.start_dictation(self.page)
-        self.assertEqual(monitor.provider.cancel_dictation(self.page, "Original text"), "Original text")
+        monitor.default_provider.start_dictation(self.page)
+        self.assertEqual(monitor.default_provider.cancel_dictation(self.page, "Original text"), "Original text")
         self.assertFalse(self.page.evaluate('window.sentEarly'))
         self.assertFalse(self.page.evaluate('window.wrongControl'))
         self.assertEqual(self.page.evaluate('window.stopCount'), 1)

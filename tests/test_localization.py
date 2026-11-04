@@ -139,7 +139,7 @@ class LocalizationTests(unittest.TestCase):
         display = CaptureSource("display:1", "Screenshot desktop", "display", 0, 0, 1920, 1080)
         window = CaptureSource("window:1", "Settings", "window", 0, 0, 900, 600)
         overlay.set_capture_sources([display, window])
-        overlay.set_chatgpt_tabs([{"title": "Settings", "id": "tab", "url": "https://chatgpt.com/c/1"}])
+        overlay.set_chat_tabs([{"title": "Settings", "id": "tab", "url": "https://chatgpt.com/c/1"}])
         overlay.capture_source_combo.setCurrentIndex(1)
         overlay.set_transcript("Settings\n用户输入 {raw}")
         overlay.set_status("Browser connected")
@@ -150,7 +150,7 @@ class LocalizationTests(unittest.TestCase):
             for language in ("zh", "en", "zh"):
                 dialog.language_combo.setCurrentIndex(dialog.language_combo.findData(language))
                 self.assertEqual(overlay.transcript_area.toPlainText(), "Settings\n用户输入 {raw}")
-                self.assertEqual(overlay.chatgpt_tab_combo.currentText(), "Settings")
+                self.assertEqual(overlay.chat_tab_combo.currentText(), "Settings")
                 self.assertEqual(overlay.capture_source_combo.currentData(), window)
                 self.assertEqual(overlay.capture_source_combo.currentText(), "Settings")
                 self.assertEqual(dialog.hold_microphone_edit.keySequence(), "Right Alt")
@@ -168,7 +168,7 @@ class LocalizationTests(unittest.TestCase):
             overlay.set_dictation_partial("Settings 用户说的话")
             localization.set_language("en")
             self.assertEqual(overlay.dictation_state_label.text(), "Listening…\n\nSettings 用户说的话")
-            overlay.set_status("Could not send to ChatGPT: unavailable", error=True)
+            overlay.set_status("Could not send: unavailable", error=True)
             localization.set_language("zh")
             self.assertEqual(overlay.transcript_area.placeholderText(), "无法发送：unavailable")
             self.assertEqual(

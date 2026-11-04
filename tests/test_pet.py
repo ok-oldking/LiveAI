@@ -71,7 +71,7 @@ class PetTests(unittest.TestCase):
 
     def test_listening_keeps_input_region_visible_outside_overlay(self):
         w = self.window
-        w.set_chatgpt_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
+        w.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
         outside = w._pointer_hover_bounds().topLeft() - QPoint(100, 100)
         with patch("live_gpt.app.QCursor.pos", return_value=outside):
             w._track_pointer(outside)
@@ -112,7 +112,7 @@ class PetTests(unittest.TestCase):
 
     def test_processing_and_playback_show_content_and_hover_reveals_controls(self):
         w = self.window
-        w.set_chatgpt_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
+        w.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
         outside = w._pointer_hover_bounds().topLeft() - QPoint(100, 100)
         with patch("live_gpt.app.QCursor.pos", return_value=outside):
             w.begin_response_display("Hello")
@@ -141,7 +141,7 @@ class PetTests(unittest.TestCase):
 
     def test_local_subtitles_stay_visible_until_first_audio_with_and_without_auto_hide(self):
         w = self.window
-        w.set_chatgpt_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
+        w.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
         outside = w._pointer_hover_bounds().topLeft() - QPoint(100, 100)
         with patch("live_gpt.app.QCursor.pos", return_value=outside):
             for auto_hide in (False, True):
@@ -210,7 +210,7 @@ class PetTests(unittest.TestCase):
         self.assertIsNone(controller._ensure_local_speech_worker())
 
         controller.browser_monitor = Mock()
-        controller.selected_chatgpt_tab_id = "tab"
+        controller.selected_chat_tab_id = "tab"
         controller._handle_send_requested("Next question", None)
         self.assertIsNone(controller._local_voice_playback_error)
 
@@ -326,43 +326,43 @@ class PetTests(unittest.TestCase):
         self.assertFalse(w.isHidden())
         self.assertFalse(w._auto_hide_timer.isActive())
         tabs = [{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}]
-        w.set_chatgpt_tabs(tabs)
+        w.set_chat_tabs(tabs)
         w._track_pointer(outside)
         self.assertFalse(w._chrome_visible)
         self.assertTrue(w._auto_hide_timer.isActive())
         w._hide_for_auto_hide()
         self.assertTrue(w.isHidden())
-        w.set_chatgpt_tabs([])
+        w.set_chat_tabs([])
         self.assertFalse(w.isHidden())
         self.assertTrue(w._chrome_visible)
         self.assertFalse(w._auto_hide_timer.isActive())
         w._hide_for_auto_hide()
         self.assertFalse(w.isHidden())
         self.assertTrue(w.auto_hide_enabled)
-        w.set_chatgpt_tabs(tabs)
+        w.set_chat_tabs(tabs)
         self.assertTrue(w._auto_hide_timer.isActive())
 
     def test_debug_connected_hint_then_late_tab_is_selected(self):
         w = self.window
         w.set_debug_connection(True)
-        w.set_chatgpt_tabs([])
-        self.assertIn("Open chatgpt.com", w.transcript_area.placeholderText())
+        w.set_chat_tabs([])
+        self.assertIn("opens chatgpt.com", w.transcript_area.placeholderText())
         self.assertTrue(w.remote_debugging_button.isHidden())
         for status in ("Browser connected", "Enable remote debugging in the browser",
                        "Retrying connection… approve it in the browser"):
             w.set_browser_status(status)
-            self.assertIn("Debugger connected", w.chatgpt_tab_combo.currentText())
-            self.assertIn("Open chatgpt.com", w.transcript_area.placeholderText())
-            self.assertIn("Open chatgpt.com", w.chatgpt_tab_combo.toolTip())
+            self.assertIn("Debugger connected", w.chat_tab_combo.currentText())
+            self.assertIn("opens chatgpt.com", w.transcript_area.placeholderText())
+            self.assertIn("opens chatgpt.com", w.chat_tab_combo.toolTip())
         self.assertFalse(w.transcript_area.isEnabled())
         self.assertTrue(w._chrome_visible)
         selections = []
-        w.chatgpt_tab_selected.connect(selections.append)
-        w.set_chatgpt_tabs([{"id": "new", "title": "ChatGPT", "url": "https://chatgpt.com/"}])
+        w.chat_tab_selected.connect(selections.append)
+        w.set_chat_tabs([{"id": "new", "title": "ChatGPT", "url": "https://chatgpt.com/"}])
         self.assertEqual(selections, ["new"])
         self.assertTrue(w.transcript_area.isEnabled())
-        w.set_chatgpt_tabs([])
-        self.assertIn("Open chatgpt.com", w.transcript_area.placeholderText())
+        w.set_chat_tabs([])
+        self.assertIn("opens chatgpt.com", w.transcript_area.placeholderText())
         w.set_debug_connection(False)
         self.assertFalse(w.remote_debugging_button.isHidden())
 
@@ -374,12 +374,12 @@ class PetTests(unittest.TestCase):
         area.moveTopLeft(w.transcript_area.mapTo(w, QPoint()))
         before = w.grab(area).toImage()
         w.set_debug_connection(True)
-        w.set_chatgpt_tabs([])
+        w.set_chat_tabs([])
         QApplication.processEvents()
         self.assertFalse(w.transcript_area.graphicsEffect().isEnabled())
-        self.assertIn("Open chatgpt.com", w.transcript_area.placeholderText())
+        self.assertIn("opens chatgpt.com", w.transcript_area.placeholderText())
         self.assertNotEqual(before, w.grab(area).toImage())
-        w.set_chatgpt_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
+        w.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
         w._set_chrome_visible(False)
         self.assertTrue(w.transcript_area.graphicsEffect().isEnabled())
         w._set_chrome_visible(True)
@@ -407,7 +407,7 @@ class PetTests(unittest.TestCase):
 
     def test_screen_tracking_shows_margin_and_hides_everything_except_pet(self):
         w = self.window
-        w.set_chatgpt_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
+        w.set_chat_tabs([{"id": "tab", "title": "ChatGPT", "url": "https://chatgpt.com"}])
         bounds = w._pointer_hover_bounds()
         inside_margin = QPoint(w.frameGeometry().left() - 1, w.frameGeometry().center().y())
         outside = bounds.topLeft() - QPoint(1, 1)

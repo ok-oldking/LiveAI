@@ -79,6 +79,7 @@ from .browser import (
 from .config import Config, DEFAULT_CONFIG
 from .localization import UiTranslations, localization, resolve_language, translate_message, tr
 from .pet import PetWidget, available_pets, default_pet_path
+from .providers import PROVIDERS, provider_site
 from .pet_download import download_pet, pet_source
 from .logger import Logger, config_logger, shutdown_logger
 from .response_content import reply_code_blocks, reply_html_with_links
@@ -110,7 +111,7 @@ UNLOCK_ICON_PATH = ASSET_DIRECTORY / "unlock.svg"
 PET_ICON_PATH = ASSET_DIRECTORY / "pet.svg"
 COMBOBOX_STYLE = """
 QComboBox, QComboBox#voiceCombo, QComboBox#languageCombo,
-QComboBox#chatgptTabCombo, QComboBox#captureSourceCombo { padding-right: 32px; }
+QComboBox#chatTabCombo, QComboBox#captureSourceCombo { padding-right: 32px; }
 QComboBox::drop-down {
     subcontrol-origin: border;
     subcontrol-position: top right;
@@ -1415,7 +1416,7 @@ class HotkeyConfigDialog(QDialog):
         self.sovits_output_title = QLabel(tr("Generated speech"))
         self.sovits_output_title.setObjectName("voiceFieldGroupTitle")
         self.sovits_output_description = QLabel(
-            tr("Choose the language of ChatGPT replies sent to speech synthesis.")
+            tr("Choose the language of chat replies sent to speech synthesis.")
         )
         self.sovits_output_description.setObjectName("settingsNote")
         self.sovits_output_description.setWordWrap(True)
@@ -3230,9 +3231,9 @@ class OverlayWindow(QMainWindow):
     send_requested = Signal(str, object)
     configure_requested = Signal()
     open_remote_debugging_requested = Signal()
-    chatgpt_tab_selected = Signal(str)
-    chatgpt_connection_changed = Signal(bool)
-    chatgpt_preference_changed = Signal(str)
+    chat_tab_selected = Signal(str)
+    chat_connection_changed = Signal(bool)
+    chat_preference_changed = Signal(str)
     capture_source_selected = Signal(str)
     geometry_changed = Signal(object)
 
@@ -3264,7 +3265,8 @@ class OverlayWindow(QMainWindow):
         self._debug_connected = False
         self._preferred_capture_source_key = ""
         self._capture_source_runtime_key = ""
-        self._preferred_chatgpt_url = ""
+        self._preferred_chat_url = ""
+        self._new_tab_site = provider_site()
         self.setWindowTitle("LiveAI")
         self.setMinimumSize(760, 180)
         # Broadcast window pickers filter out Qt.Tool / WS_EX_TOOLWINDOW.
@@ -3319,17 +3321,17 @@ class OverlayWindow(QMainWindow):
         title.setObjectName("overlayTitle")
         title_layout.addWidget(title)
 
-        self.chatgpt_tab_combo = QComboBox()
-        self.chatgpt_tab_combo.setObjectName("chatgptTabCombo")
-        self.chatgpt_tab_combo.setAccessibleName(tr("ChatGPT window"))
-        self.chatgpt_tab_combo.setMinimumWidth(220)
-        self.chatgpt_tab_combo.setMaximumWidth(300)
-        self.chatgpt_tab_combo.addItem(tr("Looking for ChatGPT windows…"))
-        self.chatgpt_tab_combo.setEnabled(False)
-        self.chatgpt_tab_combo.currentIndexChanged.connect(
-            self._chatgpt_tab_changed
+        self.chat_tab_combo = QComboBox()
+        self.chat_tab_combo.setObjectName("chatTabCombo")
+        self.chat_tab_combo.setAccessibleName(tr("Chat window"))
+        self.chat_tab_combo.setMinimumWidth(220)
+        self.chat_tab_combo.setMaximumWidth(300)
+        self.chat_tab_combo.addItem(tr("Looking for chat windows…"))
+        self.chat_tab_combo.setEnabled(False)
+        self.chat_tab_combo.currentIndexChanged.connect(
+            self._chat_tab_changed
         )
-        title_layout.addWidget(self.chatgpt_tab_combo, 1)
+        title_layout.addWidget(self.chat_tab_combo, 1)
 
         self.capture_source_combo = QComboBox()
         self.capture_source_combo.setObjectName("captureSourceCombo")
@@ -3407,7 +3409,7 @@ class OverlayWindow(QMainWindow):
         self.transcript_area = TranscriptEditor()
         self.transcript_area.setObjectName("transcriptArea")
         self.transcript_area.setEnabled(False)
-        self.transcript_area.set_hint(tr("Looking for ChatGPT windows…"))
+        self.transcript_area.set_hint(tr("Looking for chat windows…"))
 
         self.subtitle_panel = QFrame()
         self.subtitle_panel.setObjectName("subtitlePanel")
@@ -3492,7 +3494,7 @@ class OverlayWindow(QMainWindow):
         self.microphone_button.setAccessibleName(tr("Hold to dictate"))
         self.microphone_button.setEnabled(False)
         self.microphone_button.setToolTip(
-            tr("Press and hold to use ChatGPT dictation")
+            tr("Press and hold to use browser dictation")
         )
         self.microphone_button.pressed.connect(self.dictation_requested.emit)
         self.microphone_button.released.connect(
@@ -3585,7 +3587,7 @@ class OverlayWindow(QMainWindow):
                 padding: 10px 14px;
                 font-size: 14px;
             }
-            QComboBox#chatgptTabCombo,
+            QComboBox#chatTabCombo,
             QComboBox#captureSourceCombo {
                 min-height: 34px;
                 padding: 0 10px;
@@ -3594,11 +3596,11 @@ class OverlayWindow(QMainWindow):
                 border: 1px solid rgba(130, 165, 230, 75);
                 border-radius: 8px;
             }
-            QComboBox#chatgptTabCombo:disabled,
+            QComboBox#chatTabCombo:disabled,
             QComboBox#captureSourceCombo:disabled {
                 color: rgba(228, 235, 255, 155);
             }
-            QComboBox#chatgptTabCombo QAbstractItemView,
+            QComboBox#chatTabCombo QAbstractItemView,
             QComboBox#captureSourceCombo QAbstractItemView {
                 color: #f5f7ff;
                 background-color: rgb(18, 28, 58);
@@ -3768,8 +3770,8 @@ class OverlayWindow(QMainWindow):
     ) -> None:
         labels = {
             "idle": tr("Press and hold the microphone to dictate"),
-            "recording": tr("ChatGPT is listening… release to finish"),
-            "saved": tr("Dictation copied from ChatGPT"),
+            "recording": tr("Listening… release to finish"),
+            "saved": tr("Dictation copied"),
             "error": tr("Browser dictation unavailable"),
         }
         label = translate_message(message) if message else labels[state]
@@ -3827,49 +3829,56 @@ class OverlayWindow(QMainWindow):
         cursor.movePosition(QTextCursor.MoveOperation.End)
         self.transcript_area.setTextCursor(cursor)
 
-    def set_chatgpt_tabs(self, tabs: list[dict[str, str]]) -> None:
+    def set_chat_tabs(self, tabs: list[dict[str, str]]) -> None:
         if getattr(self, "_shutting_down", False):
             return
         was_connected = self._browser_connected
         self._browser_connected = bool(tabs)
-        selected_id = self.chatgpt_tab_combo.currentData()
-        self.chatgpt_tab_combo.blockSignals(True)
-        self.chatgpt_tab_combo.clear()
+        selected_id = self.chat_tab_combo.currentData()
+        self.chat_tab_combo.blockSignals(True)
+        self.chat_tab_combo.clear()
         if not tabs:
-            self.chatgpt_tab_combo.addItem(tr("No ChatGPT tabs open"))
-            self.chatgpt_tab_combo.setEnabled(False)
+            self.chat_tab_combo.addItem(tr("No chat tabs open"))
+            self.chat_tab_combo.setEnabled(False)
             self.remote_debugging_button.setVisible(not self._debug_connected)
             self.microphone_button.setEnabled(False)
             self.transcript_area.setEnabled(False)
             self._show_browser_connection_hint()
         else:
+            # Name the site only when tabs from several sites are listed.
+            show_site = len({tab.get("provider") for tab in tabs}) > 1
             for tab in tabs:
-                self.chatgpt_tab_combo.addItem(tab["title"], tab["id"])
-                index = self.chatgpt_tab_combo.count() - 1
-                self.chatgpt_tab_combo.setItemData(
+                provider = PROVIDERS.get(tab.get("provider", ""))
+                title = (
+                    f"{provider.display_name} · {tab['title']}"
+                    if show_site and provider is not None else tab["title"]
+                )
+                self.chat_tab_combo.addItem(title, tab["id"])
+                index = self.chat_tab_combo.count() - 1
+                self.chat_tab_combo.setItemData(
                     index,
                     tab["url"],
                     Qt.ItemDataRole.ToolTipRole,
                 )
-            self.chatgpt_tab_combo.setEnabled(True)
+            self.chat_tab_combo.setEnabled(True)
             self.remote_debugging_button.setVisible(False)
             self.microphone_button.setEnabled(True)
             self.transcript_area.setEnabled(True)
             self.set_status(tr("Hold the microphone or enter a message"))
-            selected_index = self.chatgpt_tab_combo.findData(selected_id)
-            if selected_index < 0 and self._preferred_chatgpt_url:
-                for index in range(self.chatgpt_tab_combo.count()):
-                    url = self.chatgpt_tab_combo.itemData(
+            selected_index = self.chat_tab_combo.findData(selected_id)
+            if selected_index < 0 and self._preferred_chat_url:
+                for index in range(self.chat_tab_combo.count()):
+                    url = self.chat_tab_combo.itemData(
                         index,
                         Qt.ItemDataRole.ToolTipRole,
                     )
-                    if url == self._preferred_chatgpt_url:
+                    if url == self._preferred_chat_url:
                         selected_index = index
                         break
-            self.chatgpt_tab_combo.setCurrentIndex(
+            self.chat_tab_combo.setCurrentIndex(
                 selected_index if selected_index >= 0 else 0
             )
-        self.chatgpt_tab_combo.blockSignals(False)
+        self.chat_tab_combo.blockSignals(False)
         if not self._browser_connected:
             self._auto_hide_timer.stop()
             if was_connected and self.isHidden():
@@ -3877,11 +3886,11 @@ class OverlayWindow(QMainWindow):
         elif not was_connected:
             self.schedule_auto_hide()
         self._track_pointer(QCursor.pos())
-        self.chatgpt_connection_changed.emit(bool(tabs))
+        self.chat_connection_changed.emit(bool(tabs))
         if tabs:
-            self._activate_chatgpt_tab(
-                self.chatgpt_tab_combo.currentIndex(),
-                save_preference=not bool(self._preferred_chatgpt_url),
+            self._activate_chat_tab(
+                self.chat_tab_combo.currentIndex(),
+                save_preference=not bool(self._preferred_chat_url),
             )
 
     def set_debug_connection(self, connected: bool) -> None:
@@ -3892,24 +3901,24 @@ class OverlayWindow(QMainWindow):
 
     def _show_browser_connection_hint(self) -> None:
         if self._debug_connected:
-            self.chatgpt_tab_combo.setItemText(0, tr("Debugger connected — waiting for ChatGPT"))
+            self.chat_tab_combo.setItemText(0, tr("Debugger connected — waiting for chat"))
         message = (
-            tr("Debugger connected. If no ChatGPT tab is open when connecting, "
-            "LiveAI opens chatgpt.com in a new tab.")
+            tr("Debugger connected. If no chat tab is open when connecting, "
+               "LiveAI opens {site} in a new tab.", site=self._new_tab_site)
             if self._debug_connected else
-            tr("Connect to a ChatGPT window to begin")
+            tr("Connect to a chat window to begin")
         )
-        self.chatgpt_tab_combo.setToolTip(message)
+        self.chat_tab_combo.setToolTip(message)
         self.set_status(message)
 
     def set_browser_status(self, status: str) -> None:
         # Connection state takes precedence over queued setup/retry messages.
         # The explicit disconnect signal clears this state on a real disconnect.
         if (self._debug_connected and not self._browser_connected
-                and not status.startswith("Could not open ChatGPT tab:")):
+                and not status.startswith("Could not open a chat tab:")):
             self._show_browser_connection_hint()
             return
-        self.chatgpt_tab_combo.setToolTip(translate_message(status))
+        self.chat_tab_combo.setToolTip(translate_message(status))
         status_lower = status.casefold()
         self.set_status(
             status,
@@ -3918,8 +3927,8 @@ class OverlayWindow(QMainWindow):
                 for word in ("not installed", "disconnected", "unable", "could not")
             ),
         )
-        if not self.chatgpt_tab_combo.isEnabled():
-            self.chatgpt_tab_combo.setItemText(0, translate_message(status))
+        if not self.chat_tab_combo.isEnabled():
+            self.chat_tab_combo.setItemText(0, translate_message(status))
 
     def set_response_links(self, links: object) -> None:
         self.transcript_area.response_links = links
@@ -3968,8 +3977,8 @@ class OverlayWindow(QMainWindow):
         self._preferred_capture_source_key = source_key
         self._capture_source_runtime_key = ""
 
-    def set_preferred_chatgpt_window(self, url: str) -> None:
-        self._preferred_chatgpt_url = url
+    def set_preferred_chat_window(self, url: str) -> None:
+        self._preferred_chat_url = url
 
     def set_send_result(
         self,
@@ -3992,13 +4001,13 @@ class OverlayWindow(QMainWindow):
         del message
         if not self._subtitle_mode_active:
             self.begin_response_display(sent_text)
-        self._set_subtitle_status(tr("Waiting for ChatGPT…"))
-        self.set_status(tr("Waiting for ChatGPT…"))
+        self._set_subtitle_status(tr("Waiting for a reply…"))
+        self.set_status(tr("Waiting for a reply…"))
 
     def begin_response_display(
         self,
         sent_text: str = "",
-        message: str = tr("Sending to ChatGPT…"),
+        message: str = tr("Sending…"),
     ) -> None:
         self._collapse_hover_input()
         self._playback_input_timer.stop()
@@ -4533,26 +4542,26 @@ class OverlayWindow(QMainWindow):
         self.transcript_area.show()
         self._track_pointer(QCursor.pos())
 
-    def _chatgpt_tab_changed(self, index: int) -> None:
-        self._activate_chatgpt_tab(index, save_preference=True)
+    def _chat_tab_changed(self, index: int) -> None:
+        self._activate_chat_tab(index, save_preference=True)
 
-    def _activate_chatgpt_tab(
+    def _activate_chat_tab(
         self,
         index: int,
         *,
         save_preference: bool,
     ) -> None:
-        tab_id = self.chatgpt_tab_combo.itemData(index)
+        tab_id = self.chat_tab_combo.itemData(index)
         if tab_id:
-            self.chatgpt_tab_selected.emit(str(tab_id))
+            self.chat_tab_selected.emit(str(tab_id))
             if save_preference:
-                url = self.chatgpt_tab_combo.itemData(
+                url = self.chat_tab_combo.itemData(
                     index,
                     Qt.ItemDataRole.ToolTipRole,
                 )
-                self._preferred_chatgpt_url = str(url or "")
-                self.chatgpt_preference_changed.emit(
-                    self._preferred_chatgpt_url
+                self._preferred_chat_url = str(url or "")
+                self.chat_preference_changed.emit(
+                    self._preferred_chat_url
                 )
 
     def _capture_source_changed(self, index: int) -> None:
@@ -4710,7 +4719,7 @@ class OverlayWindow(QMainWindow):
         label = tr("Disable auto-hide") if enabled else tr("Enable auto-hide")
         self.auto_hide_button.setAccessibleName(label)
         self.auto_hide_button.setToolTip(
-            tr("{label}; the overlay appears for dictation and ChatGPT replies", label=label)
+            tr("{label}; the overlay appears for dictation and chat replies", label=label)
         )
         if enabled:
             self.schedule_auto_hide()
@@ -5163,8 +5172,8 @@ class TrayController:
         self.window.set_preferred_capture_source(
             str(self.config["capture_source"])
         )
-        self.window.set_preferred_chatgpt_window(
-            str(self.config["chatgpt_window"])
+        self.window.set_preferred_chat_window(
+            str(self.config["chat_window"])
         )
         self.window.auto_hide_button.setChecked(
             bool(self.config["auto_hide"])
@@ -5173,7 +5182,7 @@ class TrayController:
         self.browser_monitor.set_use_browser_voice(
             self.config["playing_backend"] == "web"
         )
-        self.selected_chatgpt_tab_id: str | None = None
+        self.selected_chat_tab_id: str | None = None
         self.dictation_tab_id: str | None = None
         self._dictation_state = "idle"
         self._dictation_input_held = False
@@ -5207,19 +5216,19 @@ class TrayController:
         self.window.open_remote_debugging_requested.connect(
             self._open_remote_debugging_settings
         )
-        self.window.chatgpt_tab_selected.connect(
-            self._select_chatgpt_tab
+        self.window.chat_tab_selected.connect(
+            self._select_chat_tab
         )
-        self.window.chatgpt_connection_changed.connect(
-            self._set_chatgpt_connection
+        self.window.chat_connection_changed.connect(
+            self._set_chat_connection
         )
-        self.window.chatgpt_preference_changed.connect(
-            self._save_chatgpt_preference
+        self.window.chat_preference_changed.connect(
+            self._save_chat_preference
         )
         self.window.capture_source_selected.connect(
             self._save_capture_source_preference
         )
-        self.browser_monitor.tabs_changed.connect(self.window.set_chatgpt_tabs)
+        self.browser_monitor.tabs_changed.connect(self.window.set_chat_tabs)
         self.browser_monitor.response_links_changed.connect(self.window.set_response_links)
         self.browser_monitor.response_html_changed.connect(self.window.set_response_html)
         self.browser_monitor.debug_connection_changed.connect(self.window.set_debug_connection)
@@ -5664,7 +5673,7 @@ class TrayController:
             return
         if not final and len(text) < len(self._local_voice_longest_text):
             logger.debug(
-                "Ignoring a temporary shorter ChatGPT response snapshot "
+                "Ignoring a temporary shorter response snapshot "
                 f"characters={len(text)} "
                 f"longest={len(self._local_voice_longest_text)}"
             )
@@ -5840,17 +5849,17 @@ class TrayController:
             self._start_local_dictation()
             return
 
-        tab_id = self.selected_chatgpt_tab_id
+        tab_id = self.selected_chat_tab_id
         if tab_id is None:
             self._dictation_input_held = False
             self.window.set_microphone_state(
                 "error",
-                tr("Select a ChatGPT window first"),
+                tr("Select a chat window first"),
             )
             self.window.schedule_auto_hide(5_000)
             return
 
-        logger.info(f"Starting ChatGPT dictation tab_id={tab_id!r}")
+        logger.info(f"Starting browser dictation tab_id={tab_id!r}")
         self.dictation_tab_id = tab_id
         self._dictation_state = "starting"
         self._browser_dictation_start_requested = False
@@ -5961,7 +5970,7 @@ class TrayController:
             return
 
         tab_id = (
-            self.selected_chatgpt_tab_id
+            self.selected_chat_tab_id
             if queue_upload else self.dictation_tab_id
         )
         if tab_id is None:
@@ -6088,13 +6097,13 @@ class TrayController:
         self._dictation_state = "finishing"
         local = tab_id == "local"
         logger.info(
-            f"Finishing {'local' if local else 'ChatGPT'} dictation "
+            f"Finishing {'local' if local else 'browser'} dictation "
             f"tab_id={tab_id!r}"
         )
         self.window.set_dictation_finishing()
         self.window.set_microphone_state(
             "recording",
-            tr("Transcribing local audio…") if local else tr("Finishing ChatGPT dictation…"),
+            tr("Transcribing local audio…") if local else tr("Finishing dictation…"),
         )
         if local and self._local_dictation_thread is not None:
             self._local_dictation_thread.stop_recording()
@@ -6104,7 +6113,7 @@ class TrayController:
     def _cancel_dictation(self, tab_id: str) -> None:
         self._dictation_state = "cancelling"
         self._discard_preuploaded_dictation_screenshot()
-        logger.info(f"Cancelling short ChatGPT dictation tab_id={tab_id!r}")
+        logger.info(f"Cancelling short browser dictation tab_id={tab_id!r}")
         self.window.set_dictation_cancelling()
         self.window.set_microphone_state(
             "recording",
@@ -6270,10 +6279,10 @@ class TrayController:
             None,
         )
         self._pending_dictation_capture = None
-        tab_id = self.selected_chatgpt_tab_id
+        tab_id = self.selected_chat_tab_id
         if tab_id is None:
             self.window.set_status(
-                tr("Select a ChatGPT window first"),
+                tr("Select a chat window first"),
                 error=True,
             )
             return
@@ -6317,7 +6326,7 @@ class TrayController:
             f"screenshot={capture_source.key if capture_source else None!r}"
         )
         self.window.begin_response_display(text)
-        self.window.set_status(tr("Sending to ChatGPT…"))
+        self.window.set_status(tr("Sending…"))
         self._local_voice_interrupted = False
         self._local_voice_error = None
         self._local_voice_playback_error = None
@@ -6349,34 +6358,34 @@ class TrayController:
 
     def _handle_clear_requested(self) -> None:
         self._short_voice_text = None
-        tab_id = self.selected_chatgpt_tab_id
+        tab_id = self.selected_chat_tab_id
         if tab_id is None:
             self.window.set_status(
-                "Text cleared locally; no ChatGPT window selected",
+                "Text cleared locally; no chat window selected",
                 error=True,
             )
             return
 
-        logger.info(f"Clearing ChatGPT input tab_id={tab_id!r}")
-        self.window.set_status(tr("Clearing ChatGPT input…"))
+        logger.info(f"Clearing chat input tab_id={tab_id!r}")
+        self.window.set_status(tr("Clearing the input…"))
         self.browser_monitor.request_clear(tab_id)
 
     def _on_clear_finished(self, success: bool, message: str) -> None:
         self.window.set_status(message, error=not success)
 
-    def _select_chatgpt_tab(self, tab_id: str) -> None:
-        self.selected_chatgpt_tab_id = tab_id
+    def _select_chat_tab(self, tab_id: str) -> None:
+        self.selected_chat_tab_id = tab_id
         self.browser_monitor.request_focus_tab(tab_id)
-        logger.info(f"Selected ChatGPT tab id={tab_id}")
+        logger.info(f"Selected chat tab id={tab_id}")
 
-    def _set_chatgpt_connection(self, connected: bool) -> None:
+    def _set_chat_connection(self, connected: bool) -> None:
         if connected:
             return
-        self.selected_chatgpt_tab_id = None
+        self.selected_chat_tab_id = None
         self.browser_monitor.request_focus_tab(None)
 
-    def _save_chatgpt_preference(self, url: str) -> None:
-        self.config["chatgpt_window"] = url
+    def _save_chat_preference(self, url: str) -> None:
+        self.config["chat_window"] = url
 
     def _save_capture_source_preference(self, source_key: str) -> None:
         self.config["capture_source"] = source_key

@@ -71,43 +71,12 @@ class Localization(QObject):
 localization = Localization()
 
 
-_STATUS_TEXT = {
-    "Selected ChatGPT window is no longer available": "Selected chat window is no longer available",
-    "Sent to ChatGPT": "Sent",
-    "Timed out while waiting for ChatGPT's reply": "Timed out while waiting for a reply",
-    "Could not read ChatGPT's reply: {error}": "Could not read the reply: {error}",
-    "Could not clear ChatGPT input: {error}": "Could not clear the input: {error}",
-    "Could not send to ChatGPT: {error}": "Could not send: {error}",
-    "ChatGPT is responding…": "Responding…",
-    "ChatGPT's image input was not found": "The image input was not found",
-    "ChatGPT's dictation microphone was not found": "The dictation microphone was not found",
-    "ChatGPT did not start listening": "The browser did not start listening",
-    "ChatGPT's stale dictation did not cancel": "The previous dictation did not cancel",
-    "ChatGPT's dictation Done button was not found": "The dictation Done button was not found",
-    "ChatGPT's dictation did not cancel": "Dictation did not cancel",
-    "ChatGPT's dictation Cancel button was not found": "The dictation Cancel button was not found",
-    "ChatGPT is listening… release to finish": "Listening… release to finish",
-    "Dictation copied from ChatGPT": "Dictation copied",
-    "Looking for ChatGPT windows…": "Looking for chat windows…",
-    "No ChatGPT tabs open": "No chat tabs open",
-    "Debugger connected — waiting for ChatGPT": "Debugger connected — waiting for chat",
-    "Debugger connected. If no ChatGPT tab is open when connecting, LiveAI opens chatgpt.com in a new tab.": "Debugger connected. If no chat tab is open when connecting, LiveAI opens chatgpt.com in a new tab.",
-    "Connect to a ChatGPT window to begin": "Connect to a chat window to begin",
-    "Waiting for ChatGPT…": "Waiting for a reply…",
-    "Sending to ChatGPT…": "Sending…",
-    "Select a ChatGPT window first": "Select a chat window first",
-    "Finishing ChatGPT dictation…": "Finishing dictation…",
-    "Clearing ChatGPT input…": "Clearing the input…",
-}
-
-
 def tr(source: str, **values: object) -> str:
-    translated = TRANSLATIONS.get(source, source) if localization.language == "zh" else _STATUS_TEXT.get(source, source)
+    translated = TRANSLATIONS.get(source, source) if localization.language == "zh" else source
     return translated.format(**values) if values else translated
 
 
 _ENGLISH_SOURCES = {translated: source for source, translated in TRANSLATIONS.items()}
-_ENGLISH_SOURCES.update({text: source for source, text in _STATUS_TEXT.items()})
 
 
 def _message_patterns() -> list[tuple[re.Pattern[str], str]]:
@@ -115,7 +84,7 @@ def _message_patterns() -> list[tuple[re.Pattern[str], str]]:
     for source, translated in TRANSLATIONS.items():
         if "{" not in source:
             continue
-        for template in (source, translated, _STATUS_TEXT.get(source, source)):
+        for template in (source, translated):
             parts = []
             for literal, field, _spec, _conversion in Formatter().parse(template):
                 parts.append(re.escape(literal))
@@ -197,7 +166,7 @@ class UiTranslations(QObject):
                     if widget.objectName() == "languageCombo" and widget.itemData(index) in ("en", "zh"):
                         continue
                     # Conversation and window names belong to external apps.
-                    if widget.objectName() in ("chatgptTabCombo", "captureSourceCombo") and widget.itemData(index) is not None:
+                    if widget.objectName() in ("chatTabCombo", "captureSourceCombo") and widget.itemData(index) is not None:
                         continue
                     text = widget.itemText(index)
                     source = text if text in TRANSLATIONS else _ENGLISH_SOURCES.get(text)

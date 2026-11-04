@@ -22,7 +22,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "auto_hide": False,
     "capture_source": "",
     "capture_cursor": True,
-    "chatgpt_window": "",
+    "chat_window": "",
     "window_geometry": [],
     "window_locked": False,
     "subtitle_rows": 4,
@@ -162,6 +162,12 @@ class Config(dict[str, Any]):
                 "playing_backend",
                 "web",
             )
+            migrated = True
+        if isinstance(loaded, dict) and "chatgpt_window" in loaded:
+            # Renamed when chat sites other than ChatGPT became possible.
+            loaded = dict(loaded)
+            legacy_window = loaded.pop("chatgpt_window")
+            loaded.setdefault("chat_window", legacy_window)
             migrated = True
         if isinstance(loaded, dict) and loaded.get("playing_backend") == "sherpa":
             loaded = dict(loaded)
