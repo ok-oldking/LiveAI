@@ -570,7 +570,8 @@ class LocalSpeechThreadTests(unittest.TestCase):
 
     def test_local_thinking_stays_silent_while_reply_is_synthesized(self) -> None:
         import numpy as np
-        from live_gpt.browser import BrowserMonitor, _ActiveResponse, _MonitorState, _ResponseSnapshot
+        from live_gpt.browser import BrowserMonitor, _ActiveResponse, _MonitorState
+        from live_gpt.providers import ResponseSnapshot as _ResponseSnapshot
 
         manager = Mock()
         manager.display_name = "Test TTS"
@@ -597,7 +598,7 @@ class LocalSpeechThreadTests(unittest.TestCase):
         thinking = _ResponseSnapshot(False, True, False, "", "正在思考")
         reply = _ResponseSnapshot(True, False, True, "好了。", "Finishing reply…")
         with (
-            patch.object(monitor, "_response_snapshot", side_effect=[thinking, thinking, reply, reply]),
+            patch.object(monitor.provider, "response_snapshot", side_effect=[thinking, thinking, reply, reply]),
             patch("live_gpt.browser.time.monotonic", return_value=100) as clock,
         ):
             monitor._poll_active_response(state)
@@ -670,7 +671,8 @@ class LocalSpeechThreadTests(unittest.TestCase):
     def test_local_timeout_is_spoken_without_thinking_announcements(self) -> None:
         import numpy as np
         from live_gpt.localization import localization
-        from live_gpt.browser import BrowserMonitor, _ActiveResponse, _MonitorState, _ResponseSnapshot
+        from live_gpt.browser import BrowserMonitor, _ActiveResponse, _MonitorState
+        from live_gpt.providers import ResponseSnapshot as _ResponseSnapshot
 
         original_language = localization.language
         self.addCleanup(localization.set_language, original_language)
@@ -697,7 +699,7 @@ class LocalSpeechThreadTests(unittest.TestCase):
                 monitor.local_voice_announcement.connect(controller._speak_local_announcement)
                 monitor.response_finished.connect(controller._on_response_finished)
                 state = _MonitorState(active_response=_ActiveResponse(page=Mock(), turn_marker_before=None, started_at=0))
-                with patch.object(monitor, "_response_snapshot", return_value=_ResponseSnapshot(False, True, False, "", "正在思考")), patch("live_gpt.browser.time.monotonic") as clock:
+                with patch.object(monitor.provider, "response_snapshot", return_value=_ResponseSnapshot(False, True, False, "", "正在思考")), patch("live_gpt.browser.time.monotonic") as clock:
                     for moment in (0, 60, 120, 600):
                         clock.return_value = moment
                         monitor._poll_active_response(state)

@@ -4,7 +4,7 @@ import math
 import re
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from queue import Empty, Queue
 from typing import Any, Callable, Iterator
@@ -26,203 +26,17 @@ from .browser_windows import (
 )
 from .logger import Logger
 from .cdp_bridge import ChatGPTCDPBridge
-from .response_content import RESPONSE_CONTENT_SCRIPT
+from .providers import (
+    DEFAULT_PROVIDER_ID,
+    ChatProvider,
+    DictationStartCancelled,
+    UsageLimitError,
+    create_provider,
+)
+from .providers.media import MEDIA_PROGRESS_SCRIPT, MEDIA_STOP_SCRIPT
 
 
 logger = Logger.get_logger(__name__)
-ASSISTANT_TURN_SELECTOR = (
-    '[data-testid^="conversation-turn-"][data-turn="assistant"], '
-    '[data-turn-key]:has([data-chatgpt-search-unit-key$=":assistant"]), '
-    '[data-turn-key]:has([data-markdown-text-style="assistant-message"])'
-)
-CHATGPT_COMPOSER_SELECTOR = (
-    'form[data-thread-find-composer="true"]:visible '
-    '[data-composer-markdown][contenteditable="true"][role="textbox"]:visible, '
-    '[data-composer-surface="true"]:visible '
-    '#prompt-textarea[contenteditable="true"]:visible, '
-    '[data-composer-surface="true"]:visible '
-    '[contenteditable="true"][role="textbox"]:visible, '
-    '[data-composer-markdown][contenteditable="true"][role="textbox"]:visible, '
-    '#prompt-textarea[contenteditable="true"]:visible, '
-    'textarea[name="prompt-textarea"]:visible'
-)
-USAGE_LIMIT_BANNER_SELECTOR = (
-    'form[data-thread-find-composer="true"] aside[role="status"]:visible, '
-    'form aside[role="status"]:visible, '
-    '[data-above-composer-portal] [role="status"]:visible, '
-    '[role="alert"]:visible'
-)
-_USAGE_LIMIT_PATTERN = re.compile(
-    r"(?:reached|hit|exceeded)[^.!?\n]{0,120}\blimit\b"
-    r"|\b(?:usage|message|rate) limit (?:reached|exceeded)\b"
-    r"|\bout of (?:usage|credits)\b"
-    r"|\b(?:no|not enough|insufficient) credits\b"
-    r"|(?:已达到|已達到|已达|已達|达到|達到|超出|超过|超過).{0,60}(?:上限|限额|限額)"
-    r"|(?:额度|額度|次数|次數|点数|點數).{0,20}(?:用尽|用盡|不足)",
-    re.IGNORECASE,
-)
-
-
-class _UsageLimitError(RuntimeError):
-    """ChatGPT cannot accept the prompt until its usage allowance resets."""
-
-
-class _DictationStartCancelled(RuntimeError):
-    """The hold ended before browser dictation finished starting."""
-
-
-def _label_selectors(element: str, *labels: str) -> str:
-    """Match localized controls when ChatGPT exposes no stable test ID."""
-    return ", ".join(f'{element}[aria-label="{label}"]' for label in labels)
-
-
-MORE_ACTIONS_SELECTOR = _label_selectors(
-    "button", "More actions", "更多操作"
-)
-READ_ALOUD_SELECTOR = (
-    'button[data-testid="voice-play-turn-action-button"], '
-    + _label_selectors("button", "Read aloud", "朗读", "朗讀")
-)
-READ_ALOUD_MENU_SELECTOR = ", ".join(
-    # Menu text lives in nested spans/divs; text-is on the role element
-    # misses it. Filter visibility before .last to exclude stale menus.
-    f'[role="{role}"]:visible:has-text("{label}")'
-    for role in ("menuitem", "menuitemradio")
-    for label in ("Read aloud", "朗读", "朗讀")
-)
-DICTATION_RESULT_TIMEOUT_MS = 20_000
-DICTATION_RESULT_POLL_INTERVAL_MS = 200
-DICTATION_RESULT_POLL_COUNT = (
-    DICTATION_RESULT_TIMEOUT_MS // DICTATION_RESULT_POLL_INTERVAL_MS
-)
-DICTATION_START_SELECTORS = (
-    'button[aria-label="Dictate"]',
-    'button[aria-label="Start dictation"]',
-    _label_selectors("button", "听写", "聽寫", "开始听写", "開始聽寫"),
-    'button[data-testid="composer-speech-button"]',
-    'button[data-testid="dictation-button"]',
-)
-DICTATION_END_SELECTORS = (
-    'button[aria-label="Submit dictation"]',
-    'button[aria-label="Stop dictation"]',
-    'button[aria-label="Finish dictation"]',
-    'button[aria-label="Stop recording"]',
-    'button[data-testid="composer-dictation-done-button"]',
-    'button[data-testid="dictation-done-button"]',
-    _label_selectors(
-        "button", "提交听写", "提交聽寫", "停止听写", "停止聽寫",
-        "结束听写", "結束聽寫", "停止录音", "停止錄音",
-    ),
-    # Keep generic completion buttons confined to the composer, after the
-    # dedicated recording controls, so other page dialogs do not match.
-    'form button[aria-label="Done"]',
-    'form button:text-is("Done")',
-    _label_selectors("form button", "完成"),
-    'form button:text-is("完成")',
-)
-DICTATION_CANCEL_SELECTORS = (
-    'button[aria-label="Cancel dictation"]',
-    'button[aria-label="Cancel recording"]',
-    'button[aria-label*="cancel" i][aria-label*="dictation" i]',
-    'button[aria-label*="cancel" i][aria-label*="record" i]',
-    'button[data-testid="composer-dictation-cancel-button"]',
-    'button[data-testid="dictation-cancel-button"]',
-    'button[data-testid*="dictation"][data-testid*="cancel"]',
-    'form button:text-is("Cancel")',
-    _label_selectors(
-        "button", "取消听写", "取消聽寫", "取消录音", "取消錄音"
-    ),
-    'form button:text-is("取消")',
-)
-_MEDIA_TRACKER_SCRIPT = """
-() => {
-    // Each Read aloud click starts a fresh session, including on reused audio.
-    window.__liveGptReadAloudTracker = {
-        media: null,
-        playCount: 0,
-        mediaCount: 0,
-        playedTime: 0,
-        lastTime: 0,
-        source: ''
-    };
-    if (window.__liveGptMediaTrackerInstalled === 2) return;
-    window.__liveGptMediaTrackerInstalled = 2;
-    const sources = new Map();
-    window.__liveGptMediaSources = sources;
-    const originalCreateURL = URL.createObjectURL;
-    URL.createObjectURL = function(object) {
-        const url = originalCreateURL.call(this, object);
-        if (typeof MediaSource !== 'undefined' && object instanceof MediaSource) {
-            sources.set(url, new WeakRef(object));
-            if (sources.size > 128) sources.delete(sources.keys().next().value);
-        }
-        return url;
-    };
-    const sample = () => {
-        const tracker = window.__liveGptReadAloudTracker;
-        const media = tracker.media;
-        if (!media) return;
-        const current = Number.isFinite(media.currentTime) ? media.currentTime : 0;
-        const source = media.currentSrc || media.src || '';
-        if (source !== tracker.source || (!media.seeking && current < tracker.lastTime - 0.05)) {
-            tracker.mediaCount += 1;
-            tracker.lastTime = 0;
-        }
-        // Only consumed audio advances the estimate; pauses and buffering do not.
-        if (!media.seeking) tracker.playedTime += Math.max(current - tracker.lastTime, 0);
-        tracker.lastTime = current;
-        tracker.source = source;
-    };
-    window.__liveGptSampleMedia = sample;
-    const observed = new WeakSet();
-    const originalPlay = HTMLMediaElement.prototype.play;
-    HTMLMediaElement.prototype.play = function(...args) {
-        sample();
-        const tracker = window.__liveGptReadAloudTracker;
-        if (tracker.media !== this) {
-            tracker.media = this;
-            tracker.mediaCount += 1;
-            tracker.lastTime = Number.isFinite(this.currentTime) ? this.currentTime : 0;
-            tracker.source = this.currentSrc || this.src || '';
-        }
-        tracker.playCount += 1;
-        if (!observed.has(this)) {
-            observed.add(this);
-            for (const event of ['timeupdate', 'pause', 'waiting', 'ended', 'emptied', 'seeking', 'seeked']) {
-                this.addEventListener(event, () => {
-                    if (window.__liveGptReadAloudTracker.media === this) sample();
-                });
-            }
-        }
-        return originalPlay.apply(this, args);
-    };
-}
-"""
-_MEDIA_PROGRESS_SCRIPT = """
-() => {
-    const tracker = window.__liveGptReadAloudTracker;
-    const media = tracker?.media ||
-        [...document.querySelectorAll('audio, video')].find(item =>
-            !item.paused || item.currentTime > 0
-        );
-    if (!media) return null;
-    window.__liveGptSampleMedia?.();
-    const source = window.__liveGptMediaSources?.get(media.currentSrc || media.src)?.deref();
-    return {
-        playCount: tracker?.playCount || 0,
-        mediaCount: tracker?.mediaCount || 0,
-        playedTime: tracker?.playedTime || 0,
-        // A growing MediaSource duration describes the buffered prefix only.
-        durationIsFinal: !source || source.readyState === 'ended',
-        currentTime: Number.isFinite(media.currentTime)
-            ? media.currentTime : 0,
-        duration: Number.isFinite(media.duration)
-            ? media.duration : null,
-        paused: media.paused,
-        ended: media.ended
-    };
-}
-"""
 
 
 @dataclass
@@ -283,18 +97,6 @@ class _ActiveResponse:
     last_links: tuple[tuple[str, str], ...] = ()
 
 
-@dataclass(frozen=True)
-class _ResponseSnapshot:
-    has_new_turn: bool
-    is_generating: bool
-    has_completion_controls: bool
-    text: str
-    status: str
-    links: tuple[tuple[str, str], ...] = ()
-    error_message: str = ""
-    html: str = ""
-
-
 @dataclass
 class _ActiveReading:
     page: Any
@@ -311,12 +113,36 @@ class _ActiveReading:
     quiet_since: float | None = None
 
 
+class _MonitorProviderContext:
+    """Expose the monitor's cancellation state and watchdog to a provider."""
+
+    def __init__(self, monitor: BrowserMonitor) -> None:
+        self._monitor = monitor
+
+    def stop_requested(self) -> bool:
+        return self._monitor._stop_requested
+
+    def dictation_start_cancelled(self) -> bool:
+        cancelled = self._monitor._dictation_start_cancelled
+        return cancelled is not None and cancelled.is_set()
+
+    def check_dictation_start_cancelled(self) -> None:
+        self._monitor._check_dictation_start_cancelled()
+
+    def operation(self, timeout: float) -> AbstractContextManager[None]:
+        return self._monitor._browser_operation(timeout)
+
+
 class BrowserMonitor(QThread):
+    """Own Playwright on a worker thread and publish live chat tab state.
+
+    Site-specific page automation lives in a ChatProvider; this class owns the
+    browser connection, request queues, and the reply/reading state machines.
+    """
+
     response_links_changed = Signal(object)
     response_html_changed = Signal(str)
     debug_connection_changed = Signal(bool)
-    """Own Playwright on a worker thread and publish live ChatGPT tab state."""
-
     tabs_changed = Signal(object)
     status_changed = Signal(str)
     send_finished = Signal(bool, str, str)
@@ -332,8 +158,11 @@ class BrowserMonitor(QThread):
     dictation_finished = Signal(bool, str, str)
     clear_finished = Signal(bool, str)
 
-    def __init__(self) -> None:
+    def __init__(self, provider_id: str = DEFAULT_PROVIDER_ID) -> None:
         super().__init__()
+        self.provider: ChatProvider = create_provider(
+            provider_id, _MonitorProviderContext(self),
+        )
         self._stop_requested = False
         self._retry_connection_requested = False
         self._connection_pending = threading.Event()
@@ -607,22 +436,7 @@ class BrowserMonitor(QThread):
         if reading is None:
             return
         try:
-            reading.page.evaluate(
-                """
-                () => {
-                    // Read aloud can use an Audio object outside the DOM.
-                    const mediaElements = new Set([
-                        window.__liveGptReadAloudTracker?.media,
-                        ...document.querySelectorAll('audio, video')
-                    ]);
-                    for (const media of mediaElements) {
-                        if (!media) continue;
-                        media.pause();
-                        try { media.currentTime = 0; } catch (_) {}
-                    }
-                }
-                """
-            )
+            reading.page.evaluate(MEDIA_STOP_SCRIPT)
         except Exception as error:
             logger.warning(f"Unable to stop ChatGPT playback cleanly: {error}")
         state.active_reading = None
@@ -768,7 +582,7 @@ class BrowserMonitor(QThread):
                 url, title = target.get("url"), target.get("title")
                 if isinstance(url, str) and isinstance(title, str) and title.strip():
                     target_titles[url] = title.strip()
-        tabs = self._collect_chatgpt_tabs(
+        tabs = self._collect_tabs(
             state.browser, playwright_error, target_titles, state.last_tabs,
         )
         if tabs is None:
@@ -785,53 +599,65 @@ class BrowserMonitor(QThread):
             state.initial_chatgpt_tab_checked = True
             if tabs or any(
                 isinstance(target, dict) and target.get("type") == "page"
-                and isinstance(target.get("url"), str) and is_chatgpt_url(target["url"])
+                and isinstance(target.get("url"), str)
+                and self.provider.matches_url(target["url"])
                 for target in targets
             ) or self._stop_requested or self._retry_connection_requested:
                 return
             try:
                 # Creating about:blank through new_page() would be filtered out
                 # by the relay. Create the ChatGPT target directly instead.
-                state.discovery_session.send("Target.createTarget", {"url": "https://chatgpt.com/"})
+                state.discovery_session.send("Target.createTarget", {"url": self.provider.home_url})
                 logger.info("Opened ChatGPT in a new tab after connecting to the browser")
             except playwright_error as error:
                 logger.warning(f"Could not open ChatGPT tab: {error}")
                 self._set_status(f"Could not open ChatGPT tab: {error}")
 
     @staticmethod
-    def _collect_chatgpt_tabs(
+    def _browser_pages(
+        browser: Any, playwright_error: type[Exception],
+    ) -> list[Any] | None:
+        """Return every attached page, or None when the browser is gone."""
+        try:
+            contexts = list(browser.contexts)
+        except playwright_error:
+            return None
+        pages: list[Any] = []
+        for context in contexts:
+            try:
+                pages.extend(context.pages)
+            except playwright_error:
+                continue
+        return pages
+
+    def _collect_tabs(
+        self,
         browser: Any,
         playwright_error: type[Exception],
         target_titles: dict[str, str],
         previous_tabs: list[dict[str, str]] | None = None,
     ) -> list[dict[str, str]] | None:
-        try:
-            contexts = list(browser.contexts)
-        except playwright_error:
+        pages = self._browser_pages(browser, playwright_error)
+        if pages is None:
             return None
 
         tabs: list[dict[str, str]] = []
         previous = {tab["id"]: tab for tab in previous_tabs or []}
-        for context in contexts:
+        for page in pages:
             try:
-                pages = list(context.pages)
+                if page.is_closed() or not self.provider.matches_url(page.url):
+                    continue
+                page_id = str(id(page))
+                url = page.url
+                old_tab = previous.get(page_id, {})
+                title = target_titles.get(url) or (
+                    old_tab.get("title") if old_tab.get("url") == url else None
+                ) or self.provider.display_name
+                tabs.append(
+                    {"id": page_id, "title": title, "url": url}
+                )
             except playwright_error:
                 continue
-            for page in pages:
-                try:
-                    if page.is_closed() or not is_chatgpt_url(page.url):
-                        continue
-                    page_id = str(id(page))
-                    url = page.url
-                    old_tab = previous.get(page_id, {})
-                    title = target_titles.get(url) or (
-                        old_tab.get("title") if old_tab.get("url") == url else None
-                    ) or "ChatGPT"
-                    tabs.append(
-                        {"id": page_id, "title": title, "url": url}
-                    )
-                except playwright_error:
-                    continue
 
         tabs.sort(key=lambda tab: tab["title"].casefold())
         return tabs
@@ -865,7 +691,7 @@ class BrowserMonitor(QThread):
 
     def _sync_focus_emulation(self, state: _MonitorState, playwright_error: type[Exception]) -> None:
         page = (
-            self._find_chatgpt_page(state.browser, self._selected_tab_id, playwright_error)
+            self._find_page(state.browser, self._selected_tab_id, playwright_error)
             if state.browser is not None and self._selected_tab_id is not None else None
         )
         if page is state.focus_page:
@@ -928,7 +754,7 @@ class BrowserMonitor(QThread):
                 )
                 continue
 
-            page = self._find_chatgpt_page(
+            page = self._find_page(
                 browser,
                 request.tab_id,
                 playwright_error,
@@ -947,22 +773,22 @@ class BrowserMonitor(QThread):
                 if request.action == "start":
                     self._dictation_start_cancelled = request.cancelled
                     self._check_dictation_start_cancelled()
-                    self._cancel_existing_dictation(page, starting=True)
+                    self.provider.cancel_existing_dictation(page, starting=True)
                     # Clear a previous prompt's screenshot before installing
                     # this one; attachment requests use a separate queue.
                     self._process_attachment_requests(browser, playwright_error)
                     self._check_dictation_start_cancelled()
-                    initial_text = self._read_composer_text(page)
+                    initial_text = self.provider.read_composer_text(page)
                     if request.screenshot_webp is not None:
                         self._check_dictation_start_cancelled()
-                        self._clear_chatgpt_attachments(page)
+                        self.provider.clear_attachments(page)
                         self._check_dictation_start_cancelled()
                         screenshot_pasted = True
-                        self._paste_screenshot(page, request.screenshot_webp)
-                        self._wait_for_screenshot_attachment(page)
+                        self.provider.paste_screenshot(page, request.screenshot_webp)
+                        self.provider.wait_for_screenshot_attachment(page)
                     self._check_dictation_start_cancelled()
                     start_attempted = True
-                    self._start_browser_dictation(page)
+                    self.provider.start_dictation(page)
                     self._check_dictation_start_cancelled()
                     self._dictation_initial_text[request.tab_id] = initial_text
                     self.dictation_started.emit(
@@ -974,7 +800,7 @@ class BrowserMonitor(QThread):
                         request.tab_id,
                         "",
                     )
-                    text = self._finish_browser_dictation(
+                    text = self.provider.finish_dictation(
                         page,
                         initial_text,
                     )
@@ -988,7 +814,7 @@ class BrowserMonitor(QThread):
                         request.tab_id,
                         "",
                     )
-                    text = self._cancel_browser_dictation(
+                    text = self.provider.cancel_dictation(
                         page,
                         initial_text,
                     )
@@ -999,16 +825,15 @@ class BrowserMonitor(QThread):
                     )
             except Exception as error:
                 if request.action == "start" and (
-                    isinstance(error, _DictationStartCancelled)
+                    isinstance(error, DictationStartCancelled)
                     or (request.cancelled is not None and request.cancelled.is_set())
                 ):
                     try:
                         if not self._stop_requested:
-                            if start_attempted and self._cancel_existing_dictation(page):
-                                composer = page.locator(CHATGPT_COMPOSER_SELECTOR).first
-                                composer.fill(initial_text, timeout=5_000)
+                            if start_attempted and self.provider.cancel_existing_dictation(page):
+                                self.provider.set_composer_text(page, initial_text)
                             if screenshot_pasted:
-                                self._clear_chatgpt_attachments(page)
+                                self.provider.clear_attachments(page)
                     except Exception as cleanup_error:
                         logger.error("Unable to cancel browser dictation startup", cleanup_error)
                         self._emit_dictation_failure(
@@ -1025,9 +850,8 @@ class BrowserMonitor(QThread):
                     start_attempted or request.action in ("finish", "cancel")
                 ):
                     try:
-                        if self._cancel_existing_dictation(page):
-                            composer = page.locator(CHATGPT_COMPOSER_SELECTOR).first
-                            composer.fill(initial_text, timeout=5_000)
+                        if self.provider.cancel_existing_dictation(page):
+                            self.provider.set_composer_text(page, initial_text)
                     except Exception as cleanup_error:
                         logger.warning(f"Could not reset browser dictation after failure: {cleanup_error}")
                 self._emit_dictation_failure(
@@ -1036,6 +860,13 @@ class BrowserMonitor(QThread):
                 )
             finally:
                 self._dictation_start_cancelled = None
+
+    def _check_dictation_start_cancelled(self) -> None:
+        if self._stop_requested or (
+            self._dictation_start_cancelled is not None
+            and self._dictation_start_cancelled.is_set()
+        ):
+            raise DictationStartCancelled("Dictation cancelled")
 
     def _emit_dictation_failure(self, action: str, message: str) -> None:
         if action == "start":
@@ -1059,7 +890,7 @@ class BrowserMonitor(QThread):
                     "Unable to update dictation screenshot: browser is not connected"
                 )
                 continue
-            page = self._find_chatgpt_page(
+            page = self._find_page(
                 browser,
                 request.tab_id,
                 playwright_error,
@@ -1070,11 +901,11 @@ class BrowserMonitor(QThread):
                 )
                 continue
             try:
-                self._clear_chatgpt_attachments(page)
+                self.provider.clear_attachments(page)
                 if request.action == "replace":
                     if request.screenshot_webp is None:
                         raise RuntimeError("The screenshot data is empty")
-                    self._ensure_screenshot_uploaded(page, request.screenshot_webp)
+                    self.provider.upload_screenshot(page, request.screenshot_webp)
                     logger.info(
                         "Pasted dictation screenshot into ChatGPT "
                         f"tab_id={request.tab_id!r}"
@@ -1102,7 +933,7 @@ class BrowserMonitor(QThread):
                 self.clear_finished.emit(False, "Browser is not connected")
                 continue
 
-            page = self._find_chatgpt_page(
+            page = self._find_page(
                 browser,
                 request.tab_id,
                 playwright_error,
@@ -1115,7 +946,7 @@ class BrowserMonitor(QThread):
                 continue
 
             try:
-                self._clear_chatgpt_composer(page)
+                self.provider.clear_composer(page)
             except Exception as error:
                 logger.error("Unable to clear ChatGPT input", error)
                 self.clear_finished.emit(
@@ -1157,7 +988,7 @@ class BrowserMonitor(QThread):
                 )
                 continue
 
-            page = self._find_chatgpt_page(
+            page = self._find_page(
                 browser,
                 request.tab_id,
                 playwright_error,
@@ -1171,14 +1002,14 @@ class BrowserMonitor(QThread):
                 continue
 
             try:
-                turn_marker_before = self._assistant_turn_marker(page)
-                self._send_to_chatgpt_page(
+                turn_marker_before = self.provider.turn_marker(page)
+                self.provider.send(
                     page,
                     request.text,
                     request.screenshot_webp,
                     preserve_attachments=request.preserve_attachments,
                 )
-            except _UsageLimitError as error:
+            except UsageLimitError as error:
                 self.send_finished.emit(False, request.text, str(error))
                 continue
             except Exception as error:
@@ -1220,7 +1051,7 @@ class BrowserMonitor(QThread):
             return
 
         try:
-            snapshot = self._response_snapshot(
+            snapshot = self.provider.response_snapshot(
                 response.page,
                 response.turn_marker_before,
             )
@@ -1255,7 +1086,7 @@ class BrowserMonitor(QThread):
         if not snapshot.has_new_turn:
             response.completion_candidate_at = None
             if snapshot.status != response.last_status and (
-                snapshot.is_generating or self._is_thinking_status(response.last_status)
+                snapshot.is_generating or self.provider.is_thinking_status(response.last_status)
             ):
                 response.last_status = snapshot.status
                 self.response_changed.emit(snapshot.status, response.last_text)
@@ -1352,7 +1183,7 @@ class BrowserMonitor(QThread):
             f"characters={len(snapshot.text)} "
             f"stable_seconds={text_stable_for:.2f}"
         )
-        read_aloud_clicked = self._click_read_aloud(response.page)
+        read_aloud_clicked = self.provider.click_read_aloud(response.page)
         if read_aloud_clicked:
             state.active_reading = _ActiveReading(
                 page=response.page,
@@ -1379,7 +1210,7 @@ class BrowserMonitor(QThread):
             reading.full_text
         )
         try:
-            media = reading.page.evaluate(_MEDIA_PROGRESS_SCRIPT)
+            media = reading.page.evaluate(MEDIA_PROGRESS_SCRIPT)
         except Exception as error:
             logger.warning(f"Unable to read playback progress: {error}")
             media = None
@@ -1480,725 +1311,23 @@ class BrowserMonitor(QThread):
         self.reading_finished.emit(True, "Read aloud complete")
         state.active_reading = None
 
-    @staticmethod
-    def _find_chatgpt_page(
+    def _find_page(
+        self,
         browser: Any,
         tab_id: str,
         playwright_error: type[Exception],
     ) -> Any | None:
-        try:
-            contexts = list(browser.contexts)
-        except playwright_error:
-            return None
-
-        for context in contexts:
+        for page in self._browser_pages(browser, playwright_error) or ():
             try:
-                pages = list(context.pages)
+                if (
+                    str(id(page)) == tab_id
+                    and not page.is_closed()
+                    and self.provider.matches_url(page.url)
+                ):
+                    return page
             except playwright_error:
                 continue
-            for page in pages:
-                try:
-                    if (
-                        str(id(page)) == tab_id
-                        and not page.is_closed()
-                        and is_chatgpt_url(page.url)
-                    ):
-                        return page
-                except playwright_error:
-                    continue
         return None
-
-    @classmethod
-    def _send_to_chatgpt_page(
-        cls,
-        page: Any,
-        text: str,
-        screenshot_webp: bytes | None = None,
-        *,
-        preserve_attachments: bool = False,
-    ) -> None:
-        usage_error = cls._usage_limit_message(page)
-        if usage_error:
-            raise _UsageLimitError(usage_error)
-        composer = page.locator(CHATGPT_COMPOSER_SELECTOR).first
-        composer.wait_for(state="visible", timeout=5_000)
-        if not preserve_attachments:
-            cls._clear_chatgpt_attachments(page)
-        composer.fill(text)
-        upload_attempts_left = 3
-        if screenshot_webp is not None:
-            upload_attempts_left -= cls._ensure_screenshot_uploaded(
-                page, screenshot_webp, preserve=preserve_attachments
-            )
-        elif preserve_attachments and cls._screenshot_upload_state(page) != "missing":
-            cls._wait_for_screenshot_upload(page)
-
-        # Project side panes can coexist with a background composer. Resolve
-        # the submit control from the form we filled, excluding hidden copies.
-        form = composer.locator('xpath=ancestor::form[1]')
-        send_button = form.locator(
-            'button[data-testid="send-button"]:visible, '
-            'button#composer-submit-button[type="submit"]:visible, '
-            'button[type="submit"]:visible'
-        ).first
-        for _ in range(3):
-            try:
-                send_button.wait_for(state="visible", timeout=5_000)
-                cls._click_chatgpt_send_button(page, send_button)
-                # Clicking a usable button does not prove ChatGPT accepted the prompt.
-                page.wait_for_function("""() => {
-                    const composer = [...document.querySelectorAll(
-                        '[data-composer-markdown], #prompt-textarea, textarea[name="prompt-textarea"], '
-                        + '[data-composer-surface="true"] [contenteditable="true"][role="textbox"]'
-                    )].find(element => element.getClientRects().length);
-                    if (!composer) return false;
-                    const text = composer.value ?? composer.innerText ?? '';
-                    const attachments = composer.closest('form')?.querySelector(
-                        '[data-composer-attachments] [class*="group/composer-attachment"]'
-                    );
-                    return !text.trim() && !attachments;
-                }""", timeout=5_000, polling=100)
-                return
-            except Exception:
-                # A limit or failed upload can appear while Send becomes ready.
-                usage_error = cls._usage_limit_message(page)
-                if usage_error:
-                    raise _UsageLimitError(usage_error) from None
-                if cls._screenshot_upload_state(page) == "failed":
-                    if (
-                        screenshot_webp is not None
-                        and upload_attempts_left > 0
-                        and cls._read_composer_text(page) == text.strip()
-                    ):
-                        cls._clear_chatgpt_attachments(page)
-                        upload_attempts_left -= cls._ensure_screenshot_uploaded(
-                            page, screenshot_webp, attempts=upload_attempts_left
-                        )
-                        continue
-                    raise RuntimeError("Screenshot upload failed") from None
-                raise
-
-    @staticmethod
-    def _click_chatgpt_send_button(
-        page: Any, send_button: Any, *, timeout: int = 15_000,
-    ) -> None:
-        # A background tab or an animated composer may never provide the two
-        # stable animation frames required by Locator.click(). Check readiness
-        # and activate the same button atomically, without moving browser focus.
-        deadline = time.monotonic() + timeout / 1000
-        while True:
-            remaining = int((deadline - time.monotonic()) * 1000)
-            if remaining <= 0:
-                raise RuntimeError("ChatGPT's send button did not become ready")
-            clicked = send_button.evaluate("""button => {
-                if (!button.isConnected || !button.getClientRects().length
-                    || getComputedStyle(button).visibility !== 'visible'
-                    || button.matches(':disabled')
-                    || button.closest('[inert], [aria-disabled="true"]')) return false;
-                button.click();
-                return true;
-            }""", timeout=remaining)
-            if clicked:
-                return
-            page.wait_for_timeout(min(100, remaining))
-
-    @classmethod
-    def _clear_chatgpt_attachments(cls, page: Any) -> None:
-        remove_buttons = page.locator(
-            'button[aria-label="Remove file"], '
-            'button[aria-label="Remove attachment"], '
-            'button[aria-label="Remove image"], '
-            + _label_selectors(
-                "button", "移除文件", "删除文件", "移除附件", "删除附件",
-                "移除图片", "删除图片", "移除檔案", "刪除檔案",
-                "刪除附件", "移除圖片", "刪除圖片",
-            ) + ', '
-            'button[data-testid*="remove"][data-testid*="file"], '
-            'button[data-testid*="remove"][data-testid*="attachment"], '
-            '[data-composer-attachments] button[aria-label^="Remove "], '
-            '[data-composer-attachments] button[aria-label^="移除"], '
-            '[data-composer-attachments] button[aria-label^="删除"]'
-        )
-        for _ in range(min(int(remove_buttons.count()), 20)):
-            button = remove_buttons.last
-            if not cls._locator_is_visible(button):
-                break
-            # Attachment removal controls can be opacity-zero until hover.
-            button.evaluate("element => element.click()")
-            page.wait_for_timeout(100)
-
-    @staticmethod
-    def _screenshot_upload_state(page: Any) -> str:
-        return page.locator(
-            '[data-composer-attachments]:visible, '
-            'form [class*="group/composer-attachment"]:visible'
-        ).evaluate_all("""elements => {
-            if (!elements.length || elements.every(element =>
-                element.matches('[data-composer-attachments]')
-                && !element.childElementCount && !element.textContent.trim()
-            )) return 'missing';
-            const text = elements.map(element => element.textContent || '').join(' ');
-            if (/upload failed|failed to upload|上传失败|上傳失敗/i.test(text)) return 'failed';
-            if (/uploading|正在上传|正在上傳/i.test(text) || elements.some(element =>
-                element.querySelector('[role="progressbar"], [aria-busy="true"]')
-            )) return 'pending';
-            const images = elements.flatMap(element => [...element.querySelectorAll('img')]);
-            const form = elements[0].closest('form');
-            const send = form?.querySelector('button[type="submit"], button[data-testid="send-button"]');
-            if (send && (send.disabled || send.closest('[aria-disabled="true"]'))) return 'pending';
-            return images.some(img => img.complete && img.naturalWidth > 0) ? 'ready' : 'pending';
-        }""")
-
-    @classmethod
-    def _wait_for_screenshot_upload(cls, page: Any) -> None:
-        for _ in range(40):
-            usage_error = cls._usage_limit_message(page)
-            if usage_error:
-                raise _UsageLimitError(usage_error)
-            state = cls._screenshot_upload_state(page)
-            if state == "failed":
-                raise RuntimeError("Screenshot upload failed")
-            if state == "ready":
-                return
-            page.wait_for_timeout(250)
-        raise RuntimeError("Screenshot upload timed out")
-
-    def _wait_for_screenshot_attachment(self, page: Any) -> None:
-        """Confirm the image appeared before switching the composer to dictation."""
-        deadline = time.monotonic() + 10
-        with self._browser_operation(10):
-            for _ in range(50):
-                self._check_dictation_start_cancelled()
-                if time.monotonic() >= deadline:
-                    break
-                usage_error = self._usage_limit_message(page)
-                if usage_error:
-                    raise _UsageLimitError(usage_error)
-                state = self._screenshot_upload_state(page)
-                if state in ("pending", "ready"):
-                    return
-                if state == "failed":
-                    raise RuntimeError("Screenshot upload failed")
-                page.wait_for_timeout(200)
-        raise RuntimeError("Screenshot attachment did not appear")
-
-    @classmethod
-    def _ensure_screenshot_uploaded(
-        cls, page: Any, screenshot_webp: bytes, *, preserve: bool = False, attempts: int = 3,
-    ) -> int:
-        for attempt in range(attempts):
-            if not preserve or attempt:
-                if attempt:
-                    cls._clear_chatgpt_attachments(page)
-                cls._paste_screenshot(page, screenshot_webp)
-            try:
-                cls._wait_for_screenshot_upload(page)
-                return attempt + 1
-            except _UsageLimitError:
-                raise
-            except RuntimeError:
-                if attempt == attempts - 1:
-                    raise
-                logger.warning("Screenshot upload failed; retrying with the captured image")
-
-    @staticmethod
-    def _paste_screenshot(page: Any, screenshot_webp: bytes) -> None:
-        file_inputs = page.locator(
-            'input[type="file"][accept*="image"], input[type="file"]'
-        )
-        if int(file_inputs.count()) == 0:
-            raise RuntimeError("ChatGPT's image input was not found")
-        file_inputs.last.set_input_files(
-            {
-                "name": "live-gpt-screenshot.webp",
-                "mimeType": "image/webp",
-                "buffer": screenshot_webp,
-            },
-            timeout=10_000,
-        )
-        page.wait_for_timeout(500)
-
-    @staticmethod
-    def _clear_chatgpt_composer(page: Any) -> None:
-        composer = page.locator(CHATGPT_COMPOSER_SELECTOR).first
-        composer.wait_for(state="visible", timeout=5_000)
-        composer.fill("")
-
-    @staticmethod
-    def _read_composer_text(
-        page: Any,
-        timeout: int = DICTATION_RESULT_TIMEOUT_MS,
-    ) -> str:
-        composer = page.locator(CHATGPT_COMPOSER_SELECTOR).first
-        composer.wait_for(state="visible", timeout=timeout)
-        text = composer.evaluate(
-            """
-            element => {
-                if (typeof element.value === 'string') {
-                    return element.value;
-                }
-                return element.innerText || element.textContent || '';
-            }
-            """
-        )
-        return str(text or "").strip()
-
-    def _check_dictation_start_cancelled(self) -> None:
-        if self._stop_requested or (
-            self._dictation_start_cancelled is not None
-            and self._dictation_start_cancelled.is_set()
-        ):
-            raise _DictationStartCancelled("Dictation cancelled")
-
-    def _click_dictation_control(
-        self, page: Any, button: Any, *, starting: bool = False,
-        allow_idle: bool = False,
-    ) -> bool:
-        """Click a ready dictation control even while its layout is animating."""
-        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            if starting:
-                self._check_dictation_start_cancelled()
-            elif self._stop_requested:
-                raise RuntimeError("Dictation cancelled")
-            try:
-                if button.evaluate("""element =>
-                    !!element.getClientRects().length && !element.disabled
-                    && !element.closest('[inert], [aria-disabled="true"]')
-                    && element.getAttribute('aria-busy') !== 'true'
-                """, timeout=500):
-                    if starting:
-                        self._check_dictation_start_cancelled()
-                    # Upload animations can keep the button moving. Readiness is
-                    # checked above; force skips the layout-stability wait while
-                    # preserving a real pointer click for microphone activation.
-                    button.click(timeout=1_000, force=True, no_wait_after=True)
-                    return True
-            except PlaywrightTimeoutError:
-                # Hydration can replace or remove a control between locating it
-                # and clicking it. Re-resolve the locator on the next poll.
-                pass
-            if allow_idle:
-                text, ready = self._dictation_result_snapshot(page)
-                if text is not None and ready:
-                    return False
-            page.wait_for_timeout(100)
-        raise RuntimeError("ChatGPT's dictation control is not ready")
-
-    def _start_browser_dictation(self, page: Any) -> None:
-        self._check_dictation_start_cancelled()
-        button = self._first_visible_locator(
-            page, DICTATION_START_SELECTORS, timeout=5_000,
-        )
-        self._check_dictation_start_cancelled()
-        if button is None:
-            raise RuntimeError("ChatGPT's dictation microphone was not found")
-        self._click_dictation_control(page, button, starting=True)
-
-        end_button = self._first_visible_locator(
-            page,
-            DICTATION_END_SELECTORS,
-            timeout=10_000,
-        )
-        self._check_dictation_start_cancelled()
-        if end_button is None:
-            if self._stop_requested:
-                raise RuntimeError("Dictation cancelled")
-            raise RuntimeError("ChatGPT did not start listening")
-
-    def _cancel_existing_dictation(self, page: Any, *, starting: bool = False) -> bool:
-        """Return ChatGPT to an idle composer before starting a new session."""
-        cancel_button = None
-        for selector in DICTATION_CANCEL_SELECTORS:
-            candidate = page.locator(selector).filter(visible=True).last
-            if self._locator_is_visible(candidate):
-                cancel_button = candidate
-                break
-        if cancel_button is None:
-            return False
-
-        logger.info("Cancelling stale ChatGPT dictation before starting")
-        if not self._click_dictation_control(
-            page, cancel_button, starting=starting, allow_idle=True,
-        ):
-            logger.debug("ChatGPT dictation returned to idle while waiting for cancellation")
-            return False
-        if not self._wait_for_dictation_controls_hidden(page):
-            raise RuntimeError("ChatGPT's stale dictation did not cancel")
-        return True
-
-    def _cancel_browser_dictation(
-        self,
-        page: Any,
-        initial_text: str,
-    ) -> str:
-        button = self._first_visible_locator(
-            page,
-            DICTATION_CANCEL_SELECTORS,
-            timeout=2_000,
-        )
-        if button is None:
-            button = self._first_visible_locator(
-                page,
-                DICTATION_END_SELECTORS,
-                timeout=2_000,
-            )
-        if button is not None:
-            self._click_dictation_control(page, button)
-            if not self._wait_for_dictation_controls_hidden(page):
-                raise RuntimeError("ChatGPT's dictation did not cancel")
-        elif not self._stop_requested:
-            raise RuntimeError("ChatGPT's dictation Cancel button was not found")
-
-        composer = page.locator(CHATGPT_COMPOSER_SELECTOR).first
-        composer.wait_for(state="visible", timeout=5_000)
-        composer.fill(initial_text)
-        return initial_text.strip()
-
-    def _wait_for_dictation_controls_hidden(self, page: Any) -> bool:
-        for _ in range(50):
-            if self._stop_requested:
-                return False
-            if not self._any_visible_locator(
-                page,
-                DICTATION_CANCEL_SELECTORS + DICTATION_END_SELECTORS,
-            ):
-                return True
-            page.wait_for_timeout(100)
-        return False
-
-    def _finish_browser_dictation(
-        self,
-        page: Any,
-        initial_text: str,
-    ) -> str:
-        button = self._first_visible_locator(
-            page,
-            DICTATION_END_SELECTORS,
-            timeout=5_000,
-        )
-        if button is None:
-            if self._stop_requested:
-                return initial_text
-            raise RuntimeError("ChatGPT's dictation Done button was not found")
-        self._click_dictation_control(page, button)
-
-        initial_text = initial_text.strip()
-        text = initial_text
-        stable_polls = 0
-        ready_polls = 0
-        deadline = time.monotonic() + DICTATION_RESULT_TIMEOUT_MS / 1_000
-        for _ in range(DICTATION_RESULT_POLL_COUNT):
-            if self._stop_requested or time.monotonic() >= deadline:
-                break
-            # Transcription may legitimately take the full result timeout.
-            # Reconnect only when an individual poll stops responding.
-            with self._browser_operation(5):
-                page.wait_for_timeout(DICTATION_RESULT_POLL_INTERVAL_MS)
-                current_text, ready = self._dictation_result_snapshot(page)
-            if current_text is None:
-                stable_polls = ready_polls = 0
-                continue
-            if current_text == text:
-                stable_polls += 1
-            else:
-                text = current_text
-                stable_polls = 0
-            ready_polls = ready_polls + 1 if ready else 0
-            if stable_polls >= 2 and (text != initial_text or ready_polls >= 2):
-                return text
-        return text
-
-    @staticmethod
-    def _dictation_result_snapshot(page: Any) -> tuple[str | None, bool]:
-        # Inspect text and controls together, without waiting for a composer
-        # that may be temporarily absent or making a CDP call per selector.
-        controls = ", ".join(
-            f"{selector}:visible"
-            for group in (
-                DICTATION_START_SELECTORS
-                + DICTATION_CANCEL_SELECTORS
-                + DICTATION_END_SELECTORS
-            )
-            for selector in group.split(", ")
-        )
-        snapshot = page.locator(
-            f"{CHATGPT_COMPOSER_SELECTOR}, {controls}"
-        ).evaluate_all(
-            """(elements, startSelector) => {
-                const composer = elements.find(element =>
-                    element.matches('textarea, [contenteditable="true"]'));
-                const start = elements.find(element => element.matches(startSelector));
-                const active = elements.some(element =>
-                    element.matches('button') && !element.matches(startSelector));
-                return {
-                    text: composer ? (typeof composer.value === 'string'
-                        ? composer.value : composer.innerText || composer.textContent || '') : null,
-                    ready: !!start && !active && !start.disabled
-                        && start.getAttribute('aria-disabled') !== 'true'
-                        && start.getAttribute('aria-busy') !== 'true'
-                };
-            }""",
-            ", ".join(DICTATION_START_SELECTORS),
-        )
-        text = snapshot["text"]
-        return (str(text).strip() if text is not None else None, snapshot["ready"])
-
-    def _first_visible_locator(
-        self,
-        page: Any,
-        selectors: tuple[str, ...],
-        timeout: int,
-    ) -> Any | None:
-        deadline = time.monotonic() + timeout / 1_000
-        while time.monotonic() < deadline and not self._stop_requested:
-            if self._dictation_start_cancelled is not None and self._dictation_start_cancelled.is_set():
-                return None
-            for selector in selectors:
-                locator = page.locator(selector).filter(visible=True).last
-                if self._locator_is_visible(locator):
-                    return locator
-            page.wait_for_timeout(100)
-        return None
-
-    @classmethod
-    def _any_visible_locator(
-        cls,
-        page: Any,
-        selectors: tuple[str, ...],
-    ) -> bool:
-        return any(
-            cls._locator_is_visible(page.locator(selector).filter(visible=True).last)
-            for selector in selectors
-        )
-
-    @staticmethod
-    def _assistant_turn_marker(page: Any) -> str | None:
-        turns = page.locator(ASSISTANT_TURN_SELECTOR)
-        if int(turns.count()) == 0:
-            return None
-        turn = turns.last
-        return (
-            turn.get_attribute("data-turn-id")
-            or turn.get_attribute("data-testid")
-            or turn.get_attribute("data-turn-key")
-        )
-
-    @classmethod
-    def _usage_limit_message(cls, page: Any) -> str:
-        messages = page.locator(USAGE_LIMIT_BANNER_SELECTOR).evaluate_all("""elements =>
-            elements.map(element => {
-                const clone = element.cloneNode(true);
-                clone.querySelectorAll('button, [role="button"], [aria-hidden="true"]')
-                    .forEach(node => node.remove());
-                clone.querySelectorAll('h1, h2, h3, h4, p, div')
-                    .forEach(node => node.append(' '));
-                return clone.textContent || '';
-            })
-        """)
-        if isinstance(messages, list):
-            for message in messages:
-                if isinstance(message, str) and _USAGE_LIMIT_PATTERN.search(message):
-                    return " ".join(message.split())
-        return ""
-
-    @classmethod
-    def _response_snapshot(
-        cls,
-        page: Any,
-        turn_marker_before: str | None,
-    ) -> _ResponseSnapshot:
-        usage_error = cls._usage_limit_message(page)
-        if usage_error:
-            return _ResponseSnapshot(
-                has_new_turn=False,
-                is_generating=False,
-                has_completion_controls=False,
-                text="",
-                status=usage_error,
-                error_message=usage_error,
-            )
-        if cls._screenshot_upload_state(page) == "failed":
-            return _ResponseSnapshot(False, False, False, "", "Screenshot upload failed", error_message="Screenshot upload failed")
-        turns = page.locator(ASSISTANT_TURN_SELECTOR)
-        turn_count = int(turns.count())
-        stop_button = page.locator(
-            'button[data-testid="stop-button"], '
-            + _label_selectors("button", "Stop generating", "停止生成", "停止產生")
-            + ', ' + _label_selectors(
-                'form[data-thread-find-composer="true"] button',
-                'Stop', '停止',
-            )
-        ).first
-        is_generating = cls._locator_is_visible(stop_button)
-        live_labels = page.locator(
-            '[data-request-input-activity-root] [role="status"]:visible'
-        ).evaluate_all("elements => elements.map(element => element.textContent || '')")
-        live_status = ""
-        activity_labels = page.locator('[data-turn-key]').last.locator(
-            '[data-d-component="shimmer-text"]:visible, '
-            '[class*="cadencedShimmer-"][class*="cadencedShimmerActive-"]:visible'
-        ).evaluate_all("""elements => elements.map(element => {
-            const clone = element.cloneNode(true);
-            // The animated sweep repeats the label for visual effects only.
-            clone.querySelectorAll('[aria-hidden="true"]').forEach(node => node.remove());
-            return clone.textContent || '';
-        })""")
-        if isinstance(live_labels, list):
-            for label in reversed(live_labels):
-                status = cls._response_activity_status(str(label), True)
-                if status != "ChatGPT is responding…":
-                    live_status = status
-                    break
-        # These are explicitly rendered activity labels, not arbitrary reply
-        # text. Preserve them verbatim across languages and activity types.
-        if isinstance(activity_labels, list):
-            for label in reversed(activity_labels):
-                if isinstance(label, str) and label.strip():
-                    live_status = label.strip()
-                    break
-        is_generating = is_generating or bool(live_status)
-
-        if turn_count == 0:
-            return _ResponseSnapshot(
-                has_new_turn=False,
-                is_generating=is_generating,
-                has_completion_controls=False,
-                text="",
-                status=live_status or ("ChatGPT is responding…" if is_generating else "Waiting for ChatGPT…"),
-            )
-
-        turn = turns.last
-        turn_marker = (
-            turn.get_attribute("data-turn-id", timeout=1_000)
-            or turn.get_attribute("data-testid", timeout=1_000)
-            or turn.get_attribute("data-turn-key", timeout=1_000)
-        )
-        is_latest_turn = turn.evaluate("""element => {
-            const turns = element.ownerDocument.querySelectorAll(
-                '[data-turn-key], [data-testid^="conversation-turn-"]'
-            );
-            const latest = turns[turns.length - 1];
-            return !latest || latest === element || latest.contains(element);
-        }""")
-        # While the new turn only contains a user message and search activity,
-        # the last *assistant* match can still be an older, remounted reply.
-        # Its marker may differ from the pre-send marker after virtualization.
-        if turn_marker == turn_marker_before or not is_latest_turn:
-            return _ResponseSnapshot(
-                has_new_turn=False,
-                is_generating=is_generating,
-                has_completion_controls=False,
-                text="",
-                status=live_status or ("ChatGPT is responding…" if is_generating else "Waiting for ChatGPT…"),
-            )
-
-        markdown = turn.locator(
-            ", ".join(selector + ':not([class~="group/activity-header"] *)'
-                      + ':not([class~="group/agent-activity"] *)'
-                      for selector in (
-                '.markdown', '[data-message-author-role="assistant"] .prose',
-                '[data-markdown-text-style="assistant-message"]',
-                '[data-markdown-copy="contents"]:has([data-dil-message-id])',
-            ))
-        ).last
-        has_markdown = int(markdown.count()) > 0
-        text, reply_html = cls._response_content(markdown if has_markdown else turn)
-        if not has_markdown:
-            text = cls._response_text_from_turn(text)
-        completion_controls = turn.locator(
-            'button[data-testid="copy-turn-action-button"], '
-            + _label_selectors("button", "Copy response", "复制回复", "複製回覆")
-            + ', ' + MORE_ACTIONS_SELECTOR
-            + ', ' + _label_selectors(
-                '.turn-action-controls button', 'Copy', '复制', '複製',
-            )
-        )
-        anchors = turn.locator("a[href]").evaluate_all(
-            "elements => elements.map(a => [a.innerText, a.href])"
-        )
-        links = tuple(
-            (label, url) for label, url in anchors
-            if label and isinstance(url, str) and url.startswith(("https://", "http://"))
-        ) if isinstance(anchors, list) else ()
-        return _ResponseSnapshot(
-            has_new_turn=True,
-            is_generating=is_generating,
-            has_completion_controls=int(completion_controls.count()) > 0,
-            text=text,
-            status=live_status or ("ChatGPT is responding…" if is_generating else "Finishing reply…"),
-            links=links,
-            html=reply_html,
-        )
-
-    @staticmethod
-    def _response_text_from_turn(turn_text: str) -> str:
-        action_labels = {
-            "copy response",
-            "rate response",
-            "share",
-            "switch model",
-            "more actions",
-            "chatgpt 说：",
-            "chatgpt 說：",
-            "复制回复",
-            "複製回覆",
-            "评价回复",
-            "評價回覆",
-            "分享",
-            "切换模型",
-            "切換模型",
-            "更多操作",
-        }
-        lines = [
-            line
-            for line in turn_text.splitlines()
-            if line.strip().casefold() not in action_labels
-        ]
-        return "\n".join(lines).strip()
-
-    @staticmethod
-    def _response_content(markdown: Any) -> tuple[str, str]:
-        clean_text = markdown.evaluate(RESPONSE_CONTENT_SCRIPT)
-        if isinstance(clean_text, dict):
-            return str(clean_text.get("text", "")).strip(), str(clean_text.get("html", ""))
-        if isinstance(clean_text, str):
-            return clean_text.strip(), ""
-        return markdown.inner_text(timeout=1_000).strip(), ""
-
-    @classmethod
-    def _clean_markdown_text(cls, markdown: Any) -> str:
-        return cls._response_content(markdown)[0]
-
-    @staticmethod
-    def _is_thinking_status(status: str) -> bool:
-        return status.strip().rstrip(".…。 ").casefold() in {"thinking", "正在思考", "思考中"}
-
-    @staticmethod
-    def _response_activity_status(turn_text: str, is_generating: bool) -> str:
-        if not is_generating:
-            return "Finishing reply…"
-
-        activity_words = (
-            "searching",
-            "browsing",
-            "looking up",
-            "reading",
-            "analyzing",
-            "thinking",
-            "搜索", "搜尋", "浏览", "瀏覽", "查找",
-            "阅读", "閱讀", "分析", "思考",
-        )
-        for line in turn_text.splitlines():
-            label = line.strip()
-            if (
-                0 < len(label) <= 100
-                and any(word in label.casefold() for word in activity_words)
-            ):
-                return label
-        return "ChatGPT is responding…"
 
     @staticmethod
     def _subtitle_segments(
@@ -2266,136 +1395,6 @@ class BrowserMonitor(QThread):
             return None
         return number if math.isfinite(number) else None
 
-    @staticmethod
-    def _locator_is_visible(locator: Any) -> bool:
-        try:
-            return bool(locator.is_visible())
-        except Exception:
-            return False
-
-    @classmethod
-    def _click_read_aloud(cls, page: Any) -> bool:
-        try:
-            page.evaluate(_MEDIA_TRACKER_SCRIPT)
-            turns = page.locator(ASSISTANT_TURN_SELECTOR)
-            turn_count = int(turns.count())
-            if turn_count == 0:
-                logger.warning("Read aloud inspection found no assistant turn")
-                return False
-
-            turn = turns.last
-            turn_marker = (
-                turn.get_attribute("data-turn-id")
-                or turn.get_attribute("data-testid")
-                or turn.get_attribute("data-turn-key")
-            )
-            logger.debug(
-                "Read aloud inspection "
-                f"turn_count={turn_count} turn_marker={turn_marker!r}"
-            )
-
-            direct_buttons = turn.locator(READ_ALOUD_SELECTOR)
-            direct_count = int(direct_buttons.count())
-            direct_button = direct_buttons.last
-            direct_visible = (
-                direct_count > 0
-                and cls._locator_is_visible(direct_button)
-            )
-            logger.debug(
-                "Read aloud direct control "
-                f"count={direct_count} visible={direct_visible}"
-            )
-            if direct_visible:
-                cls._click_action_control(
-                    page,
-                    direct_button,
-                    "direct Read aloud",
-                )
-                click_path = "direct"
-            else:
-                more_action_buttons = turn.locator(MORE_ACTIONS_SELECTOR)
-                more_count = int(more_action_buttons.count())
-                more_actions = more_action_buttons.last
-                more_visible = (
-                    more_count > 0
-                    and cls._locator_is_visible(more_actions)
-                )
-                logger.debug(
-                    "Read aloud More actions control "
-                    f"count={more_count} visible={more_visible}"
-                )
-                if not more_visible:
-                    raise RuntimeError(
-                        "The latest assistant turn has no visible More actions button"
-                    )
-                cls._click_action_control(
-                    page,
-                    more_actions,
-                    "More actions",
-                    expanded_control=True,
-                )
-                read_aloud = page.locator(READ_ALOUD_MENU_SELECTOR).last
-                try:
-                    read_aloud.wait_for(state="visible", timeout=5_000)
-                except Exception:
-                    menu_items = page.locator(
-                        '[role="menuitem"], [role="menuitemradio"]'
-                    )
-                    try:
-                        labels = menu_items.all_inner_texts()[:20]
-                    except Exception:
-                        labels = []
-                    logger.debug(
-                        "Read aloud menu inspection "
-                        f"item_count={int(menu_items.count())} labels={labels!r}"
-                    )
-                    raise
-                logger.debug("Read aloud menu item is visible")
-                cls._click_action_control(
-                    page,
-                    read_aloud,
-                    "Read aloud menu item",
-                )
-                click_path = "More actions menu"
-            logger.info(f"Clicked ChatGPT Read aloud path={click_path}")
-            return True
-        except Exception as error:
-            logger.warning(f"Unable to click ChatGPT Read aloud: {error}")
-            return False
-
-    @staticmethod
-    def _click_action_control(
-        page: Any,
-        locator: Any,
-        description: str,
-        expanded_control: bool = False,
-    ) -> None:
-        try:
-            locator.click(timeout=3_000, force=True)
-        except Exception as click_error:
-            if (
-                expanded_control
-                and locator.get_attribute("aria-expanded") == "true"
-            ):
-                logger.debug(
-                    f"{description} opened despite Playwright click timeout"
-                )
-                return
-            try:
-                page.wait_for_timeout(150)
-                media = page.evaluate(_MEDIA_PROGRESS_SCRIPT)
-            except Exception:
-                media = None
-            if isinstance(media, dict) and int(media.get("playCount") or 0) > 0:
-                logger.debug(
-                    f"{description} started playback despite click timeout"
-                )
-                return
-            logger.debug(
-                f"Playwright click failed for {description}; "
-                f"using DOM click fallback: {click_error}"
-            )
-            locator.evaluate("element => element.click()")
 
     def _set_status(self, status: str) -> None:
         if status == self._last_status:

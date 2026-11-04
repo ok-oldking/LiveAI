@@ -10,7 +10,9 @@ import wave
 
 from playwright.sync_api import sync_playwright
 
-from live_gpt.browser import BrowserMonitor, _MEDIA_PROGRESS_SCRIPT, _MEDIA_TRACKER_SCRIPT
+from live_gpt.browser import BrowserMonitor
+from live_gpt.providers import ChatGPTProvider
+from live_gpt.providers.media import MEDIA_PROGRESS_SCRIPT, MEDIA_TRACKER_SCRIPT
 
 
 @unittest.skipUnless(os.environ.get("LIVE_GPT_TEST_BROWSER"), "Browser channel not selected")
@@ -153,7 +155,7 @@ class BrowserLocalizationTests(unittest.TestCase):
         reply = (Path(__file__).parent / "fixtures" / "chatgpt_citation_reply.html").read_text(encoding="utf-8")
         self.page.set_content('<div data-turn-key="new"><div data-chatgpt-search-unit-key="new:assistant">'
                               + reply + '</div><button aria-label="Copy response">Copy</button></div>')
-        snapshot = BrowserMonitor._response_snapshot(self.page, "old")
+        snapshot = ChatGPTProvider.response_snapshot(self.page, "old")
         self.assertNotIn("Forever", snapshot.text)
         self.assertNotIn("+1", snapshot.text)
         self.assertIn("Forever</a>", snapshot.html)
@@ -183,7 +185,7 @@ class BrowserLocalizationTests(unittest.TestCase):
             <ul><li>First</li><li>Second</li></ul><pre><code>x &lt; 2\nprint(x)</code></pre>
             <p><a href="javascript:alert(1)">Bad link</a></p>
             </div><button aria-label="Copy response">Copy</button></div>''')
-        snapshot = BrowserMonitor._response_snapshot(self.page, "old")
+        snapshot = ChatGPTProvider.response_snapshot(self.page, "old")
         self.assertIn("<h2>Results</h2>", snapshot.html)
         self.assertIn("<strong>these</strong>", snapshot.html)
         self.assertIn('<a href="https://example.com/docs?x=1&amp;y=2" target="_blank"', snapshot.html)
@@ -201,7 +203,7 @@ class BrowserLocalizationTests(unittest.TestCase):
         self.page.route("**/*", lambda route: route.abort())
         reply = (Path(__file__).parent / "fixtures" / "chatgpt_image_reply.html").read_text(encoding="utf-8")
         self.page.set_content(reply)
-        text, html = BrowserMonitor._response_content(self.page.locator('[data-dil-message-id]'))
+        text, html = ChatGPTProvider._response_content(self.page.locator('[data-dil-message-id]'))
         parser = ReplyImageMarkup()
         parser.feed(html)
         expected = self.page.locator('img').evaluate_all("images => images.filter(image => !image.closest('[data-d-component=badge]')).map(image => image.src)")
@@ -218,7 +220,7 @@ class BrowserLocalizationTests(unittest.TestCase):
         self.page.set_content('<base href="https://example.com/reply/"><div id="reply">'
                               '<p><img src="picture.png?x=1&amp;y=2" alt="A &amp; B"></p>'
                               '<img src="javascript:alert(1)"></div>')
-        text, html = BrowserMonitor._response_content(self.page.locator('#reply'))
+        text, html = ChatGPTProvider._response_content(self.page.locator('#reply'))
         self.assertEqual(text, "")
         self.assertIn('<p><img src="https://example.com/reply/picture.png?x=1&amp;y=2" alt="A &amp; B"></p>', html)
         self.assertNotIn("javascript:", html)
@@ -233,7 +235,7 @@ class BrowserLocalizationTests(unittest.TestCase):
             image.src = URL.createObjectURL(blob);
             await image.decode();
         }''')
-        text, html = BrowserMonitor._response_content(self.page.locator('#reply'))
+        text, html = ChatGPTProvider._response_content(self.page.locator('#reply'))
         self.assertEqual(text, "")
         self.assertIn('src="data:image/png;base64,', html)
         self.assertIn('width="16" height="8"', html)
@@ -242,7 +244,7 @@ class BrowserLocalizationTests(unittest.TestCase):
         self.page.set_content('''<div data-markdown-text-style="assistant-message"><p>Reply text.
             <span data-d-component="popover-trigger" role="button"><span data-d-component="badge" data-d-hoverable>
             <a href="https://example.com/quest">Forever +1</a></span></span></p></div>''')
-        text, html = BrowserMonitor._response_content(self.page.locator('[data-markdown-text-style]'))
+        text, html = ChatGPTProvider._response_content(self.page.locator('[data-markdown-text-style]'))
         self.assertEqual(text, "Reply text.")
         self.assertIn('href="https://example.com/quest"', html)
         self.assertIn("Forever +1</a>", html)
@@ -257,7 +259,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                     {url: 'https://example.org/quest', title: 'Another guide'}]}}
             }};
         }''')
-        text, html = BrowserMonitor._response_content(self.page.locator('[data-markdown-text-style]'))
+        text, html = ChatGPTProvider._response_content(self.page.locator('[data-markdown-text-style]'))
         self.assertEqual(text, "Reply text.")
         self.assertIn('href="https://example.com/quest"', html)
         self.assertIn('href="https://example.org/quest"', html)
@@ -269,7 +271,7 @@ class BrowserLocalizationTests(unittest.TestCase):
             <span data-d-component="popover-trigger" role="button"><span data-d-component="badge" data-d-hoverable>
             Forever +1</span></span></p></div>'''))
         self.page.goto('https://chatgpt.com/c/link-test')
-        text, html = BrowserMonitor._response_content(self.page.locator('[data-markdown-text-style]'))
+        text, html = ChatGPTProvider._response_content(self.page.locator('[data-markdown-text-style]'))
         self.assertEqual(text, "Reply text.")
         self.assertIn('href="https://chatgpt.com/c/link-test"', html)
         self.assertIn("Forever +1 (ChatGPT)</a>", html)
@@ -282,7 +284,7 @@ class BrowserLocalizationTests(unittest.TestCase):
             <span data-d-component="favicon"><img src="https://www.google.com/s2/favicons?domain=https://warcraft.wiki.gg&amp;sz=32"></span>
             <span><span data-d-stream-word>Warcraft </span><span data-d-stream-word>Wiki</span></span>
             </span></span></span></p></div>''')
-        text, html = BrowserMonitor._response_content(self.page.locator('#reply'))
+        text, html = ChatGPTProvider._response_content(self.page.locator('#reply'))
         self.assertEqual(text, "吉安娜因此失去了父亲，却保住了与萨尔之间脆弱的和平。")
         self.assertIn('href="https://warcraft.wiki.gg/"', html)
         self.assertIn("Warcraft Wiki</a>", html)
@@ -294,7 +296,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                 citation: {url: 'https://warcraft.wiki.gg/wiki/Jaina_Proudmoore', title: 'Jaina Proudmoore'}
             }};
         }''')
-        text, html = BrowserMonitor._response_content(self.page.locator('#reply'))
+        text, html = ChatGPTProvider._response_content(self.page.locator('#reply'))
         self.assertIn('href="https://warcraft.wiki.gg/wiki/Jaina_Proudmoore"', html)
         self.assertIn("Warcraft Wiki", html)
         self.assertNotIn("Warcraft", text)
@@ -305,14 +307,14 @@ class BrowserLocalizationTests(unittest.TestCase):
             <span data-d-component="popover-trigger" role="button"><span data-d-component="badge" data-d-hoverable>First source</span></span>
             <span data-d-component="popover-trigger" role="button"><span data-d-component="badge" data-d-hoverable>Warcraft Wiki</span></span></div>'''))
         self.page.goto('https://chatgpt.com/c/multiple-sources')
-        text, html = BrowserMonitor._response_content(self.page.locator('#reply'))
+        text, html = ChatGPTProvider._response_content(self.page.locator('#reply'))
         self.assertEqual(text, "Reply.")
         self.assertIn("First source (ChatGPT)</a>", html)
         self.assertIn("Warcraft Wiki (ChatGPT)</a>", html)
 
     def test_regular_link_with_button_role_remains_clickable(self):
         self.page.set_content('''<div class="markdown"><p>Read <a role="button" href="https://example.com/docs">docs</a>.</p></div>''')
-        text, html = BrowserMonitor._response_content(self.page.locator('.markdown'))
+        text, html = ChatGPTProvider._response_content(self.page.locator('.markdown'))
         self.assertEqual(text, "Read docs.")
         self.assertIn('href="https://example.com/docs"', html)
 
@@ -324,32 +326,32 @@ class BrowserLocalizationTests(unittest.TestCase):
             audio.setframerate(8000)
             audio.writeframes(b"\x00\x00" * 24000)
         url = "data:audio/wav;base64," + base64.b64encode(buffer.getvalue()).decode()
-        self.page.evaluate(_MEDIA_TRACKER_SCRIPT)
+        self.page.evaluate(MEDIA_TRACKER_SCRIPT)
         self.page.evaluate("url => { window.audio = new Audio(url); return audio.play(); }", url)
         self.page.wait_for_function("audio.currentTime > 0.2")
-        media = self.page.evaluate(_MEDIA_PROGRESS_SCRIPT)
+        media = self.page.evaluate(MEDIA_PROGRESS_SCRIPT)
         self.assertEqual(media["playCount"], 1)
         self.assertEqual(media["mediaCount"], 1)
         self.assertGreater(media["playedTime"], 0.1)
         self.assertAlmostEqual(media["duration"], 3)
         self.page.evaluate("audio.pause()")
-        paused = self.page.evaluate(_MEDIA_PROGRESS_SCRIPT)
+        paused = self.page.evaluate(MEDIA_PROGRESS_SCRIPT)
         self.page.wait_for_timeout(150)
-        self.assertAlmostEqual(self.page.evaluate(_MEDIA_PROGRESS_SCRIPT)["playedTime"],
+        self.assertAlmostEqual(self.page.evaluate(MEDIA_PROGRESS_SCRIPT)["playedTime"],
                                paused["playedTime"])
         self.page.evaluate("audio.play()")
         self.page.wait_for_function("audio.currentTime > 0.5")
-        resumed = self.page.evaluate(_MEDIA_PROGRESS_SCRIPT)
+        resumed = self.page.evaluate(MEDIA_PROGRESS_SCRIPT)
         self.assertEqual(resumed["playCount"], 2)
         self.assertEqual(resumed["mediaCount"], 1)
         self.assertGreater(resumed["playedTime"], paused["playedTime"])
         # A new reading in the same tab must not reuse the previous clock.
         self.page.evaluate("audio.pause()")
-        self.page.evaluate(_MEDIA_TRACKER_SCRIPT)
-        self.assertIsNone(self.page.evaluate(_MEDIA_PROGRESS_SCRIPT))
+        self.page.evaluate(MEDIA_TRACKER_SCRIPT)
+        self.assertIsNone(self.page.evaluate(MEDIA_PROGRESS_SCRIPT))
         self.page.evaluate("audio.currentTime = 0; audio.play()")
         self.page.wait_for_function("audio.currentTime > 0.1")
-        restarted = self.page.evaluate(_MEDIA_PROGRESS_SCRIPT)
+        restarted = self.page.evaluate(MEDIA_PROGRESS_SCRIPT)
         self.assertEqual(restarted["playCount"], 1)
         self.assertEqual(restarted["mediaCount"], 1)
         self.assertLess(restarted["playedTime"], resumed["playedTime"])
@@ -375,7 +377,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                 return audio;
             };
         }""")
-        self.page.evaluate(_MEDIA_TRACKER_SCRIPT)
+        self.page.evaluate(MEDIA_TRACKER_SCRIPT)
         self.page.evaluate("""() => {
             const first = makeChunk();
             first.play();
@@ -389,13 +391,13 @@ class BrowserLocalizationTests(unittest.TestCase):
             third.play();
             third.position = 2;
         }""")
-        progress = self.page.evaluate(_MEDIA_PROGRESS_SCRIPT)
+        progress = self.page.evaluate(MEDIA_PROGRESS_SCRIPT)
         self.assertEqual(progress["playCount"], 3)
         self.assertEqual(progress["mediaCount"], 3)
         self.assertEqual(progress["playedTime"], 9)
 
     def test_read_aloud_tracker_does_not_trust_a_growing_stream_duration(self):
-        self.page.evaluate(_MEDIA_TRACKER_SCRIPT)
+        self.page.evaluate(MEDIA_TRACKER_SCRIPT)
         self.page.evaluate("""() => {
             window.stream = new MediaSource();
             window.audio = new Audio(URL.createObjectURL(stream));
@@ -403,11 +405,11 @@ class BrowserLocalizationTests(unittest.TestCase):
             audio.load();
         }""")
         self.page.wait_for_function("stream.readyState === 'open'")
-        self.assertFalse(self.page.evaluate(_MEDIA_PROGRESS_SCRIPT)["durationIsFinal"])
+        self.assertFalse(self.page.evaluate(MEDIA_PROGRESS_SCRIPT)["durationIsFinal"])
         # With no encoded buffers the source closes on the next browser task;
         # inspect the completed stream in the same task as endOfStream().
         completed = self.page.evaluate(
-            "() => { stream.endOfStream(); return (" + _MEDIA_PROGRESS_SCRIPT + ")(); }"
+            "() => { stream.endOfStream(); return (" + MEDIA_PROGRESS_SCRIPT + ")(); }"
         )
         self.assertTrue(completed["durationIsFinal"])
 
@@ -423,14 +425,14 @@ class BrowserLocalizationTests(unittest.TestCase):
                 <div data-composer-markdown contenteditable="true" role="textbox">Unsent prompt</div>
             </form>
         ''')
-        message = BrowserMonitor._usage_limit_message(self.page)
+        message = ChatGPTProvider.usage_limit_message(self.page)
         self.assertEqual(message, f"{title} {description}")
-        snapshot = BrowserMonitor._response_snapshot(self.page, None)
+        snapshot = ChatGPTProvider.response_snapshot(self.page, None)
         self.assertEqual(snapshot.error_message, message)
         self.assertFalse(snapshot.is_generating)
         with self.assertRaisesRegex(RuntimeError, "5-hour Work usage limit"):
-            BrowserMonitor._send_to_chatgpt_page(self.page, "New prompt")
-        self.assertEqual(BrowserMonitor._read_composer_text(self.page), "Unsent prompt")
+            ChatGPTProvider.send(self.page, "New prompt")
+        self.assertEqual(ChatGPTProvider.read_composer_text(self.page), "Unsent prompt")
 
     def test_hidden_limits_and_assistant_text_do_not_block_send(self):
         self.page.set_content('''
@@ -442,13 +444,13 @@ class BrowserLocalizationTests(unittest.TestCase):
                 <div data-markdown-text-style="assistant-message">You’ve reached your usage limit</div>
             </div>
         ''')
-        self.assertEqual(BrowserMonitor._usage_limit_message(self.page), "")
-        self.assertEqual(BrowserMonitor._response_snapshot(self.page, None).error_message, "")
+        self.assertEqual(ChatGPTProvider.usage_limit_message(self.page), "")
+        self.assertEqual(ChatGPTProvider.response_snapshot(self.page, None).error_message, "")
 
     def test_chinese_usage_limit_alert_is_reported(self):
         message = "你已达到 Work 使用限额，请等待额度重置。"
         self.page.set_content(f'<div role="alert">{message}</div>')
-        self.assertEqual(BrowserMonitor._usage_limit_message(self.page), message)
+        self.assertEqual(ChatGPTProvider.usage_limit_message(self.page), message)
 
     def test_send_uses_active_chinese_composer_and_waits_until_enabled(self):
         for attribute in ('data-testid="send-button"', 'id="composer-submit-button"'):
@@ -479,7 +481,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                     </div>
                 ''')
                 self.page.evaluate("window.wrongSent=false; window.sendCount=0; window.sentText=''")
-                BrowserMonitor._send_to_chatgpt_page(self.page, "请读这条消息", preserve_attachments=True)
+                ChatGPTProvider.send(self.page, "请读这条消息", preserve_attachments=True)
                 self.assertEqual(self.page.evaluate("window.sentText"), "请读这条消息")
                 self.assertEqual(self.page.evaluate("window.sendCount"), 1)
                 self.assertFalse(self.page.evaluate("window.wrongSent"))
@@ -505,10 +507,10 @@ class BrowserLocalizationTests(unittest.TestCase):
         with self.assertRaises(TimeoutError):
             button.click(timeout=300)
         self.assertEqual(self.page.evaluate('window.sendCount'), 0)
-        BrowserMonitor._send_to_chatgpt_page(self.page, "请发送这条消息")
+        ChatGPTProvider.send(self.page, "请发送这条消息")
         self.assertEqual(self.page.evaluate('window.sendCount'), 1)
         self.assertEqual(self.page.evaluate('window.sentText'), "请发送这条消息")
-        self.assertEqual(BrowserMonitor._read_composer_text(self.page), "")
+        self.assertEqual(ChatGPTProvider.read_composer_text(self.page), "")
 
     def test_send_waits_for_replaced_disabled_button(self):
         self.page.set_content('''<form data-thread-find-composer="true" onsubmit="
@@ -519,7 +521,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                 '<button id=&quot;send&quot; type=&quot;submit&quot;>Send</button>', 150)"></div>
             <button id="send" type="submit" disabled>Send</button></form>''')
         self.page.evaluate('window.sendCount=0')
-        BrowserMonitor._send_to_chatgpt_page(self.page, "Wait for readiness")
+        ChatGPTProvider.send(self.page, "Wait for readiness")
         self.assertEqual(self.page.evaluate('window.sendCount'), 1)
         self.assertEqual(self.page.evaluate('window.sentText'), "Wait for readiness")
 
@@ -533,11 +535,11 @@ class BrowserLocalizationTests(unittest.TestCase):
                     </form>''')
                 self.page.evaluate('window.sendCount=0')
                 with self.assertRaisesRegex(RuntimeError, "send button did not become ready"):
-                    BrowserMonitor._click_chatgpt_send_button(
+                    ChatGPTProvider._click_send_button(
                         self.page, self.page.locator('button[type="submit"]'), timeout=300,
                     )
                 self.assertEqual(self.page.evaluate('window.sendCount'), 0)
-                self.assertEqual(BrowserMonitor._read_composer_text(self.page), "Keep my prompt")
+                self.assertEqual(ChatGPTProvider.read_composer_text(self.page), "Keep my prompt")
 
     def test_markdown_composer_sends_with_unlabelled_submit_id(self):
         self.page.set_content('''
@@ -559,13 +561,13 @@ class BrowserLocalizationTests(unittest.TestCase):
             </form>
         ''')
         self.page.evaluate("window.sendCount=0; window.wrongSent=false")
-        BrowserMonitor._send_to_chatgpt_page(self.page, "Send this message", preserve_attachments=True)
+        ChatGPTProvider.send(self.page, "Send this message", preserve_attachments=True)
         self.assertEqual(self.page.evaluate("window.sendCount"), 1)
         self.assertFalse(self.page.evaluate("window.wrongSent"))
         self.assertEqual(self.page.evaluate("window.sentText"), "Send this message")
-        self.assertEqual(BrowserMonitor._read_composer_text(self.page), "")
-        BrowserMonitor._clear_chatgpt_composer(self.page)
-        self.assertEqual(BrowserMonitor._read_composer_text(self.page), "")
+        self.assertEqual(ChatGPTProvider.read_composer_text(self.page), "")
+        ChatGPTProvider.clear_composer(self.page)
+        self.assertEqual(ChatGPTProvider.read_composer_text(self.page), "")
 
     def test_new_turn_layout_completes_and_reads_only_assistant_text(self):
         from unittest.mock import patch
@@ -582,9 +584,9 @@ class BrowserLocalizationTests(unittest.TestCase):
                 <button aria-label="Copy message">Copy message</button>
             </div>
         """)
-        before = BrowserMonitor._assistant_turn_marker(self.page)
+        before = ChatGPTProvider.turn_marker(self.page)
         self.assertEqual(before, "old")
-        self.assertFalse(BrowserMonitor._response_snapshot(self.page, before).has_new_turn)
+        self.assertFalse(ChatGPTProvider.response_snapshot(self.page, before).has_new_turn)
         self.page.locator('[data-turn-key="new"]').evaluate("""element => {
             element.insertAdjacentHTML('beforeend', `
                 <div data-chatgpt-search-unit-key="turn-1:2:assistant">
@@ -595,7 +597,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                     <button aria-label="Read aloud" onclick="window.readClicked=true">Read aloud</button>
                 </div>`);
         }""")
-        snapshot = BrowserMonitor._response_snapshot(self.page, before)
+        snapshot = ChatGPTProvider.response_snapshot(self.page, before)
         self.assertEqual(snapshot.text, "New reply")
         self.assertTrue(snapshot.has_completion_controls)
         self.assertFalse(snapshot.is_generating)
@@ -652,13 +654,13 @@ class BrowserLocalizationTests(unittest.TestCase):
             </div>
             <form data-thread-find-composer="true"><button aria-label="停止">Stop</button></form>
         """)
-        snapshot = BrowserMonitor._response_snapshot(self.page, "old")
+        snapshot = ChatGPTProvider.response_snapshot(self.page, "old")
         self.assertEqual(snapshot.status, "Thinking")
         self.assertTrue(snapshot.is_generating)
         self.assertEqual(snapshot.text, "")
         self.page.locator('[data-d-component="shimmer-text"]').evaluate(
             "element => element.textContent='Searching the web'")
-        self.assertEqual(BrowserMonitor._response_snapshot(self.page, "old").status, "Searching the web")
+        self.assertEqual(ChatGPTProvider.response_snapshot(self.page, "old").status, "Searching the web")
 
     def test_generation_and_reply_text_do_not_invent_thinking_status(self):
         self.page.set_content('''
@@ -667,10 +669,10 @@ class BrowserLocalizationTests(unittest.TestCase):
             </div>
             <button data-testid="stop-button">Stop</button>
         ''')
-        snapshot = BrowserMonitor._response_snapshot(self.page, "old")
+        snapshot = ChatGPTProvider.response_snapshot(self.page, "old")
         self.assertEqual(snapshot.status, "ChatGPT is responding…")
         self.page.locator('[data-turn-key]').evaluate('element => element.remove()')
-        self.assertEqual(BrowserMonitor._response_snapshot(self.page, "old").status, "ChatGPT is responding…")
+        self.assertEqual(ChatGPTProvider.response_snapshot(self.page, "old").status, "ChatGPT is responding…")
 
     def test_failed_screenshot_is_reuploaded_before_send(self):
         from unittest.mock import patch
@@ -693,12 +695,12 @@ class BrowserLocalizationTests(unittest.TestCase):
             onclick="this.parentElement.remove()">X</button></span>'''
         attachments = self.page.locator('[data-composer-attachments]')
         attachments.evaluate('(element, html) => element.innerHTML=html', failed)
-        snapshot = BrowserMonitor._response_snapshot(self.page, None)
+        snapshot = ChatGPTProvider.response_snapshot(self.page, None)
         self.assertFalse(snapshot.is_generating)
         self.assertEqual(snapshot.error_message, "Screenshot upload failed")
-        with patch.object(BrowserMonitor, "_paste_screenshot", side_effect=lambda _page, _bytes:
+        with patch.object(ChatGPTProvider, "paste_screenshot", side_effect=lambda _page, _bytes:
                 attachments.evaluate('(element, html) => element.innerHTML=html', ready)) as paste:
-            BrowserMonitor._send_to_chatgpt_page(self.page, "My prompt", b"same screenshot", preserve_attachments=True)
+            ChatGPTProvider.send(self.page, "My prompt", b"same screenshot", preserve_attachments=True)
         paste.assert_called_once_with(self.page, b"same screenshot")
         self.assertEqual(self.page.evaluate('window.sendCount'), 1)
         self.assertEqual(self.page.evaluate('window.sentText'), "My prompt")
@@ -713,13 +715,13 @@ class BrowserLocalizationTests(unittest.TestCase):
         failed = '''<span class="group/composer-attachment">上传失败
           <button type="button" aria-label="Remove live-gpt-screenshot.webp"
           onclick="this.parentElement.remove()">X</button></span>'''
-        with patch.object(BrowserMonitor, "_paste_screenshot", side_effect=lambda _page, _bytes:
+        with patch.object(ChatGPTProvider, "paste_screenshot", side_effect=lambda _page, _bytes:
                 self.page.locator('[data-composer-attachments]').evaluate('(element, html) => element.innerHTML=html', failed)) as paste:
             with self.assertRaisesRegex(RuntimeError, "Screenshot upload failed"):
-                BrowserMonitor._send_to_chatgpt_page(self.page, "Keep my prompt", b"same screenshot")
+                ChatGPTProvider.send(self.page, "Keep my prompt", b"same screenshot")
         self.assertEqual(paste.call_count, 3)
         self.assertEqual(self.page.evaluate('window.sendCount'), 0)
-        self.assertEqual(BrowserMonitor._read_composer_text(self.page), "Keep my prompt")
+        self.assertEqual(ChatGPTProvider.read_composer_text(self.page), "Keep my prompt")
 
     def test_clicking_send_without_accepting_prompt_does_not_start_response(self):
         self.page.set_content('''<form data-thread-find-composer="true" onsubmit="return false">
@@ -727,8 +729,8 @@ class BrowserLocalizationTests(unittest.TestCase):
           <button type="submit">Send</button></form>''')
         from playwright.sync_api import TimeoutError
         with self.assertRaises(TimeoutError):
-            BrowserMonitor._send_to_chatgpt_page(self.page, "Unaccepted prompt")
-        self.assertEqual(BrowserMonitor._read_composer_text(self.page), "Unaccepted prompt")
+            ChatGPTProvider.send(self.page, "Unaccepted prompt")
+        self.assertEqual(ChatGPTProvider.read_composer_text(self.page), "Unaccepted prompt")
 
     def test_upload_failure_while_send_is_clicked_reuploads_without_duplicate_message(self):
         from unittest.mock import patch
@@ -750,9 +752,9 @@ class BrowserLocalizationTests(unittest.TestCase):
         self.page.evaluate('html => window.failedHtml=html', failed)
         ready = '''<span class="group/composer-attachment"><img
           src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></span>'''
-        with patch.object(BrowserMonitor, "_paste_screenshot", side_effect=lambda _page, _bytes:
+        with patch.object(ChatGPTProvider, "paste_screenshot", side_effect=lambda _page, _bytes:
                 self.page.locator('[data-composer-attachments]').evaluate('(element, html) => element.innerHTML=html', ready)) as paste:
-            BrowserMonitor._send_to_chatgpt_page(self.page, "My prompt", b"same screenshot")
+            ChatGPTProvider.send(self.page, "My prompt", b"same screenshot")
         self.assertEqual(paste.call_count, 2)
         self.assertEqual(self.page.evaluate('window.acceptedCount'), 1)
 
@@ -784,7 +786,7 @@ class BrowserLocalizationTests(unittest.TestCase):
         self.assertIsNone(state.active_response.completion_candidate_at)
         self.page.locator('#activity').evaluate("element => element.classList.remove('cadencedShimmerActive-DpK60y')")
         self.page.locator('[data-testid="stop-button"]').evaluate("element => element.remove()")
-        snapshot = BrowserMonitor._response_snapshot(self.page, "old")
+        snapshot = ChatGPTProvider.response_snapshot(self.page, "old")
         self.assertFalse(snapshot.is_generating)
         self.assertEqual(snapshot.status, "Waiting for ChatGPT…")
 
@@ -806,7 +808,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                     page=self.page, turn_marker_before=marker_before, started_at=90,
                 ))
                 # With only activity markdown, extraction must stay empty.
-                snapshot = monitor._response_snapshot(self.page, marker_before)
+                snapshot = monitor.provider.response_snapshot(self.page, marker_before)
                 self.assertEqual(snapshot.text, "")
                 self.assertTrue(snapshot.is_generating)
                 with patch("live_gpt.browser.time.monotonic", return_value=100) as clock:
@@ -814,7 +816,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                     # During rerender the entire activity block can disappear,
                     # leaving the old reply as the last assistant selector match.
                     self.page.locator('[class~="group/agent-activity"]').evaluate("e => e.remove()")
-                    snapshot = monitor._response_snapshot(self.page, marker_before)
+                    snapshot = monitor.provider.response_snapshot(self.page, marker_before)
                     self.assertFalse(snapshot.has_new_turn)
                     self.assertEqual(snapshot.text, "")
                     monitor._poll_active_response(state)
@@ -847,7 +849,7 @@ class BrowserLocalizationTests(unittest.TestCase):
             <div data-markdown-text-style="assistant-message">Searched 12 websites</div>
           </div>
         </div>''')
-        snapshot = BrowserMonitor._response_snapshot(self.page, "old")
+        snapshot = ChatGPTProvider.response_snapshot(self.page, "old")
         self.assertEqual(snapshot.text, "The real answer.")
 
     def test_search_activity_is_not_extracted_as_reply_text(self):
@@ -859,7 +861,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                       {reply}
                     </section>
                 ''')
-                snapshot = BrowserMonitor._response_snapshot(self.page, "old")
+                snapshot = ChatGPTProvider.response_snapshot(self.page, "old")
                 self.assertEqual(snapshot.text, "Actual reply" if reply else "")
 
     def test_activity_markdown_and_localized_status_stream_before_final_reply(self):
@@ -914,7 +916,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                       <div class="turn-action-controls"><button aria-label="Copy">Copy</button></div>
                     </div>
                 '''.splitlines()))
-                snapshot = BrowserMonitor._response_snapshot(self.page, "old")
+                snapshot = ChatGPTProvider.response_snapshot(self.page, "old")
                 expected = "把这行放进宏里，点击就能重载界面：/reloadPlain text 是正文。Python 也是正文。"
                 self.assertEqual("".join(snapshot.text.splitlines()).strip(), expected)
                 monitor = BrowserMonitor()
@@ -942,7 +944,7 @@ class BrowserLocalizationTests(unittest.TestCase):
 
         reply = (Path(__file__).parent / "fixtures" / "chatgpt_code_reply.html").read_text(encoding="utf-8")
         self.page.set_content(reply)
-        text, html = BrowserMonitor._response_content(self.page.locator('.markdown'))
+        text, html = ChatGPTProvider._response_content(self.page.locator('.markdown'))
         _formatted, blocks = reply_code_blocks(html, "Plain text")
         self.assertEqual(blocks, [("Plain text", "#showtooltip 神圣打击\n/startattack\n/cast 神圣打击")])
         self.assertNotIn("Plain text", text)
@@ -975,12 +977,12 @@ class BrowserLocalizationTests(unittest.TestCase):
                     <button role="menuitem" hidden
                             onclick="window.readClicked=true">{read}</button>
                 ''')
-                snapshot = BrowserMonitor._response_snapshot(self.page, "old")
+                snapshot = ChatGPTProvider.response_snapshot(self.page, "old")
                 self.assertTrue(snapshot.has_completion_controls)
                 self.assertFalse(snapshot.is_generating)
                 self.assertEqual(snapshot.text, "这是回复。")
                 self.page.evaluate("window.readClicked=false")
-                self.assertTrue(BrowserMonitor._click_read_aloud(self.page))
+                self.assertTrue(ChatGPTProvider.click_read_aloud(self.page))
                 self.assertTrue(self.page.evaluate("window.readClicked"))
 
     def test_chinese_generation_and_direct_read_control(self):
@@ -992,8 +994,8 @@ class BrowserLocalizationTests(unittest.TestCase):
             </section>
             <button aria-label="停止生成">停止</button>
         ''')
-        self.assertTrue(BrowserMonitor._response_snapshot(self.page, "old").is_generating)
-        self.assertTrue(BrowserMonitor._click_read_aloud(self.page))
+        self.assertTrue(ChatGPTProvider.response_snapshot(self.page, "old").is_generating)
+        self.assertTrue(ChatGPTProvider.click_read_aloud(self.page))
         self.assertTrue(self.page.evaluate("window.readClicked"))
 
     def test_read_aloud_nested_label_ignores_hidden_duplicate(self):
@@ -1017,7 +1019,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                     <div hidden role="{role}" onclick="window.wrongClicked=true">{label}</div>
                 ''')
                 self.page.evaluate("window.readClicked=false; window.wrongClicked=false")
-                self.assertTrue(BrowserMonitor._click_read_aloud(self.page))
+                self.assertTrue(ChatGPTProvider.click_read_aloud(self.page))
                 self.assertTrue(self.page.evaluate("window.readClicked"))
                 self.assertFalse(self.page.evaluate("window.wrongClicked"))
 
@@ -1039,10 +1041,10 @@ class BrowserLocalizationTests(unittest.TestCase):
             </form>
         ''')
         monitor = BrowserMonitor()
-        monitor._start_browser_dictation(self.page)
-        self.assertEqual(monitor._finish_browser_dictation(self.page, ""), "你好世界")
-        monitor._start_browser_dictation(self.page)
-        self.assertEqual(monitor._cancel_browser_dictation(self.page, "原文"), "原文")
+        monitor.provider.start_dictation(self.page)
+        self.assertEqual(monitor.provider.finish_dictation(self.page, ""), "你好世界")
+        monitor.provider.start_dictation(self.page)
+        self.assertEqual(monitor.provider.cancel_dictation(self.page, "原文"), "原文")
         self.assertIsNone(self.page.evaluate("window.wrongControl"))
 
     def test_screenshot_upload_starts_before_dictation_click(self):
@@ -1066,7 +1068,7 @@ class BrowserLocalizationTests(unittest.TestCase):
         </form>''')
         self.page.evaluate("window.events=[]")
         monitor = BrowserMonitor()
-        self.assertEqual(monitor._screenshot_upload_state(self.page), "missing")
+        self.assertEqual(monitor.provider._screenshot_upload_state(self.page), "missing")
         results = []
         monitor.dictation_started.connect(lambda *args: results.append(args))
         # Page lookup uses the URL as well as the identity. Route a local
@@ -1104,7 +1106,7 @@ class BrowserLocalizationTests(unittest.TestCase):
             }, 350);
         }''')
         monitor = BrowserMonitor()
-        monitor._start_browser_dictation(self.page)
+        monitor.provider.start_dictation(self.page)
         self.assertEqual(self.page.evaluate("window.clickCount"), 1)
         self.assertEqual(self.page.evaluate("window.busyAtClick"), "false")
 
@@ -1131,16 +1133,16 @@ class BrowserLocalizationTests(unittest.TestCase):
         monitor.dictation_finished.connect(lambda *args: finished.append(args))
         monitor.dictation_started.connect(lambda *args: started.append(args))
         cancelled = monitor.request_start_dictation(str(id(self.page)), b"screenshot")
-        paste = monitor._paste_screenshot
+        paste = monitor.provider.paste_screenshot
 
         def release_during_paste(page, screenshot):
             paste(page, screenshot)
             cancelled.set()
 
-        with patch.object(monitor, "_paste_screenshot", side_effect=release_during_paste):
+        with patch.object(monitor.provider, "paste_screenshot", side_effect=release_during_paste):
             monitor._process_dictation_requests(self.browser, Error)
         self.assertEqual(self.page.evaluate("window.clickCount"), 0)
-        self.assertEqual(monitor._screenshot_upload_state(self.page), "missing")
+        self.assertEqual(monitor.provider._screenshot_upload_state(self.page), "missing")
         self.assertEqual(started, [])
         self.assertEqual(finished, [(True, "Keep this text", "Dictation cancelled")])
 
@@ -1154,7 +1156,7 @@ class BrowserLocalizationTests(unittest.TestCase):
             'this.querySelector(\'[data-composer-markdown]\').textContent=\'\'; return false">'
             + footer + '<button type="button" aria-label="Stop dictation" hidden>Stop</button></form>')
         monitor = BrowserMonitor()
-        self.assertEqual(monitor._dictation_result_snapshot(self.page), (expected, True))
+        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), (expected, True))
         self.page.evaluate('''() => {
             window.sendCount = 0;
             const editor = document.querySelector('[data-composer-markdown]');
@@ -1173,13 +1175,13 @@ class BrowserLocalizationTests(unittest.TestCase):
             };
         }''')
         with patch.object(self.page, "wait_for_timeout", wraps=self.page.wait_for_timeout) as wait:
-            text = monitor._finish_browser_dictation(self.page, "")
+            text = monitor.provider.finish_dictation(self.page, "")
         self.assertEqual(text, expected)
         self.assertEqual(wait.call_count, 3)
-        monitor._send_to_chatgpt_page(self.page, text, preserve_attachments=True)
+        monitor.provider.send(self.page, text, preserve_attachments=True)
         self.assertEqual(self.page.evaluate("window.sendCount"), 1)
         self.assertEqual(self.page.evaluate("window.sentText"), expected)
-        self.assertEqual(monitor._dictation_result_snapshot(self.page), ("", True))
+        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), ("", True))
 
     def test_empty_dictation_finishes_when_idle_microphone_returns(self):
         from unittest.mock import patch
@@ -1195,7 +1197,7 @@ class BrowserLocalizationTests(unittest.TestCase):
                 </form>''')
                 monitor = BrowserMonitor()
                 with patch.object(self.page, "wait_for_timeout", wraps=self.page.wait_for_timeout) as wait:
-                    self.assertEqual(monitor._finish_browser_dictation(self.page, ""), "")
+                    self.assertEqual(monitor.provider.finish_dictation(self.page, ""), "")
                 self.assertEqual(wait.call_count, 2)
 
     def test_dictation_snapshot_waits_for_processing_and_ignores_hidden_controls(self):
@@ -1206,18 +1208,18 @@ class BrowserLocalizationTests(unittest.TestCase):
             <button aria-label="Stop dictation" hidden>Stop</button>
         </form>''')
         monitor = BrowserMonitor()
-        self.assertEqual(monitor._dictation_result_snapshot(self.page), ("", False))
+        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), ("", False))
         mic = self.page.locator('button[aria-label="Dictate"]')
         mic.evaluate("button => { button.setAttribute('aria-busy', 'false'); button.disabled=true; }")
-        self.assertEqual(monitor._dictation_result_snapshot(self.page), ("", False))
+        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), ("", False))
         mic.evaluate("button => { button.disabled=false; button.setAttribute('aria-disabled', 'true'); }")
-        self.assertEqual(monitor._dictation_result_snapshot(self.page), ("", False))
+        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), ("", False))
         mic.evaluate("button => button.removeAttribute('aria-disabled')")
-        self.assertEqual(monitor._dictation_result_snapshot(self.page), ("", True))
+        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), ("", True))
         self.page.locator('button[aria-label="Cancel dictation"]').evaluate("button => button.hidden=false")
-        self.assertEqual(monitor._dictation_result_snapshot(self.page), ("", False))
+        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), ("", False))
         self.page.locator('#prompt-textarea').evaluate("element => element.remove()")
-        self.assertEqual(monitor._dictation_result_snapshot(self.page), (None, False))
+        self.assertEqual(monitor.provider._dictation_result_snapshot(self.page), (None, False))
 
     def test_pasted_dictate_button_starts_dictation_instead_of_voice_chat(self):
         controls = (Path(__file__).parent / "fixtures" / "chatgpt_dictate_controls.html").read_text(encoding="utf-8")
@@ -1254,17 +1256,17 @@ class BrowserLocalizationTests(unittest.TestCase):
                     };
                 }''')
                 monitor = BrowserMonitor()
-                monitor._start_browser_dictation(self.page)
+                monitor.provider.start_dictation(self.page)
                 self.assertTrue(self.page.evaluate('window.dictateClicked'))
                 self.assertFalse(self.page.evaluate('window.voiceChatClicked'))
-                self.assertEqual(monitor._finish_browser_dictation(self.page, ""), "Dictated text")
-                monitor._start_browser_dictation(self.page)
-                self.assertEqual(monitor._cancel_browser_dictation(self.page, "Original text"), "Original text")
+                self.assertEqual(monitor.provider.finish_dictation(self.page, ""), "Dictated text")
+                monitor.provider.start_dictation(self.page)
+                self.assertEqual(monitor.provider.cancel_dictation(self.page, "Original text"), "Original text")
                 self.assertFalse(self.page.evaluate('window.voiceChatClicked'))
 
     def test_dictation_click_returns_with_a_pending_navigation(self):
         from unittest.mock import Mock, patch
-        from live_gpt.browser import DICTATION_END_SELECTORS
+        from live_gpt.providers.chatgpt import DICTATION_END_SELECTORS
         from playwright.sync_api import Error
 
         controls = (Path(__file__).parent / "fixtures" / "chatgpt_dictate_controls.html").read_text(encoding="utf-8")
@@ -1279,8 +1281,8 @@ class BrowserLocalizationTests(unittest.TestCase):
         try:
             # Isolate the post-click navigation wait from the application's
             # separate listening check, already covered by the fixture above.
-            with patch.object(monitor, '_first_visible_locator', side_effect=[microphone, Mock()]) as find:
-                monitor._start_browser_dictation(self.page)
+            with patch.object(monitor.provider, '_first_visible_locator', side_effect=[microphone, Mock()]) as find:
+                monitor.provider.start_dictation(self.page)
             self.assertEqual(find.call_args.args[1], DICTATION_END_SELECTORS)
         finally:
             # Keep the pending navigation from blocking later page operations.
@@ -1369,13 +1371,13 @@ class BrowserLocalizationTests(unittest.TestCase):
             }, 300);
         }''')
         monitor = BrowserMonitor()
-        self.assertTrue(monitor._cancel_existing_dictation(self.page, starting=True))
+        self.assertTrue(monitor.provider.cancel_existing_dictation(self.page, starting=True))
         self.assertEqual(self.page.evaluate("window.cancelCount"), 1)
         self.assertFalse(self.page.evaluate("window.sentEarly"))
-        self.assertTrue(monitor._dictation_result_snapshot(self.page)[1])
+        self.assertTrue(monitor.provider._dictation_result_snapshot(self.page)[1])
 
     def test_pasted_active_dictation_footer_stops_and_cancels_without_sending(self):
-        from live_gpt.browser import DICTATION_END_SELECTORS
+        from live_gpt.providers.chatgpt import DICTATION_END_SELECTORS
 
         fixtures = Path(__file__).parent / "fixtures"
         idle = (fixtures / "chatgpt_dictate_controls.html").read_text(encoding="utf-8")
@@ -1420,15 +1422,15 @@ class BrowserLocalizationTests(unittest.TestCase):
             };
         }''')
         monitor = BrowserMonitor()
-        monitor._start_browser_dictation(self.page)
-        stop = monitor._first_visible_locator(self.page, DICTATION_END_SELECTORS, timeout=1000)
+        monitor.provider.start_dictation(self.page)
+        stop = monitor.provider._first_visible_locator(self.page, DICTATION_END_SELECTORS, timeout=1000)
         self.assertEqual(stop.get_attribute('aria-label'), 'Stop dictation')
         self.assertEqual(
-            monitor._finish_browser_dictation(self.page, "Original text"),
+            monitor.provider.finish_dictation(self.page, "Original text"),
             "Original text with transcription",
         )
-        monitor._start_browser_dictation(self.page)
-        self.assertEqual(monitor._cancel_browser_dictation(self.page, "Original text"), "Original text")
+        monitor.provider.start_dictation(self.page)
+        self.assertEqual(monitor.provider.cancel_dictation(self.page, "Original text"), "Original text")
         self.assertFalse(self.page.evaluate('window.sentEarly'))
         self.assertFalse(self.page.evaluate('window.wrongControl'))
         self.assertEqual(self.page.evaluate('window.stopCount'), 1)
@@ -1442,6 +1444,6 @@ class BrowserLocalizationTests(unittest.TestCase):
             <button aria-label="删除图片" onclick="this.remove()">删除</button>
             <button aria-label="添加文件等">添加</button>
         ''')
-        BrowserMonitor._clear_chatgpt_attachments(self.page)
+        ChatGPTProvider.clear_attachments(self.page)
         self.assertEqual(self.page.locator("button").count(), 1)
         self.assertEqual(self.page.locator("button").get_attribute("aria-label"), "添加文件等")

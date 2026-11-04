@@ -6,16 +6,18 @@ from pathlib import Path
 from unittest.mock import Mock, call, patch
 
 from live_gpt.browser import (
+    _ActiveReading,
+    BrowserMonitor,
+    _ActiveResponse,
+    _MonitorState,
+)
+from live_gpt.providers import ChatGPTProvider, ResponseSnapshot as _ResponseSnapshot
+from live_gpt.providers.chatgpt import (
     ASSISTANT_TURN_SELECTOR,
     CHATGPT_COMPOSER_SELECTOR,
     DICTATION_CANCEL_SELECTORS,
     DICTATION_RESULT_POLL_COUNT,
     DICTATION_RESULT_TIMEOUT_MS,
-    _ActiveReading,
-    BrowserMonitor,
-    _ActiveResponse,
-    _MonitorState,
-    _ResponseSnapshot,
 )
 from live_gpt.browser_discovery import is_chatgpt_url
 from live_gpt import browser_windows
@@ -43,8 +45,8 @@ class BrowserUsageLimitTests(unittest.TestCase):
         results = []
         monitor.send_finished.connect(lambda *args: results.append(args))
         with (
-            patch.object(monitor, "_assistant_turn_marker", return_value=None),
-            patch.object(BrowserMonitor, "_usage_limit_message", return_value=self.message),
+            patch.object(monitor.provider, "turn_marker", return_value=None),
+            patch.object(ChatGPTProvider, "usage_limit_message", return_value=self.message),
         ):
             monitor.request_send(str(id(page)), "Keep this prompt", b"screenshot")
             monitor._process_send_requests(browser, FakePlaywrightError, state)
@@ -59,8 +61,8 @@ class BrowserUsageLimitTests(unittest.TestCase):
         results = []
         monitor.response_finished.connect(lambda *args: results.append(args))
         with (
-            patch.object(BrowserMonitor, "_usage_limit_message", return_value=self.message),
-            patch.object(monitor, "_click_read_aloud") as read_aloud,
+            patch.object(ChatGPTProvider, "usage_limit_message", return_value=self.message),
+            patch.object(monitor.provider, "click_read_aloud") as read_aloud,
         ):
             monitor._poll_active_response(state)
         self.assertEqual(results, [(False, self.message)])
@@ -68,16 +70,16 @@ class BrowserUsageLimitTests(unittest.TestCase):
         read_aloud.assert_not_called()
 
     def test_limit_during_send_replaces_generic_click_error(self):
-        from live_gpt.browser import _UsageLimitError
+        from live_gpt.providers import UsageLimitError as _UsageLimitError
         page = Mock()
         button = page.locator.return_value.first.locator.return_value.locator.return_value.first
         button.evaluate.side_effect = RuntimeError("Send disabled")
         with (
-            patch.object(BrowserMonitor, "_usage_limit_message", side_effect=["", self.message]),
-            patch.object(BrowserMonitor, "_screenshot_upload_state", return_value="missing"),
+            patch.object(ChatGPTProvider, "usage_limit_message", side_effect=["", self.message]),
+            patch.object(ChatGPTProvider, "_screenshot_upload_state", return_value="missing"),
         ):
             with self.assertRaisesRegex(_UsageLimitError, "5-hour Work usage limit"):
-                BrowserMonitor._send_to_chatgpt_page(page, "Prompt", preserve_attachments=True)
+                ChatGPTProvider.send(page, "Prompt", preserve_attachments=True)
 
 
 class BrowserDiscoveryTests(unittest.TestCase):
@@ -237,8 +239,8 @@ class BrowserMonitorTests(unittest.TestCase):
                 monitor.local_voice_requested.connect(speech.append)
                 snapshot = _ResponseSnapshot(True, False, True, "", "Finishing reply…",
                     html='<p><img src="https://example.com/image.png"></p>')
-                with patch.object(monitor, "_response_snapshot", return_value=snapshot), \
-                        patch.object(monitor, "_click_read_aloud") as read_aloud, \
+                with patch.object(monitor.provider, "response_snapshot", return_value=snapshot), \
+                        patch.object(monitor.provider, "click_read_aloud") as read_aloud, \
                         patch("live_gpt.browser.time.monotonic", return_value=100) as clock:
                     monitor._poll_active_response(state)
                     self.assertIsNotNone(state.active_response)
@@ -255,7 +257,7 @@ class BrowserMonitorTests(unittest.TestCase):
         sources = (("Forever +1", "https://example.com/quest"),)
         updates = []
         monitor.response_links_changed.connect(updates.append)
-        with patch.object(monitor, "_response_snapshot", side_effect=[
+        with patch.object(monitor.provider, "response_snapshot", side_effect=[
             _ResponseSnapshot(True, True, False, "Reply", "Writing…"),
             _ResponseSnapshot(True, True, False, "Reply", "Writing…", links=sources),
         ]):
@@ -270,7 +272,7 @@ class BrowserMonitorTests(unittest.TestCase):
         html_updates, speech = [], []
         monitor.response_html_changed.connect(html_updates.append)
         monitor.local_voice_updated.connect(lambda text, final: speech.append((text, final)))
-        with patch.object(monitor, "_response_snapshot", side_effect=[
+        with patch.object(monitor.provider, "response_snapshot", side_effect=[
             _ResponseSnapshot(True, True, False, "Reply", "Writing…", html="<p>Reply</p>"),
             _ResponseSnapshot(True, True, False, "Reply", "Writing…", html="<p><strong>Reply</strong></p>"),
         ]):
@@ -495,11 +497,11 @@ class BrowserMonitorTests(unittest.TestCase):
                 monitor.local_voice_updated.connect(lambda *args: voice_updates.append(args))
                 snapshot = _ResponseSnapshot(True, False, True, "Reply", "Finishing reply…")
                 with (
-                    patch.object(monitor, "_response_snapshot", side_effect=[
+                    patch.object(monitor.provider, "response_snapshot", side_effect=[
                         PlaywrightTimeoutError("Locator.inner_text: Timeout 1000ms exceeded"),
                         snapshot, snapshot,
                     ]),
-                    patch.object(monitor, "_click_read_aloud", return_value=True) as read,
+                    patch.object(monitor.provider, "click_read_aloud", return_value=True) as read,
                     patch("live_gpt.browser.time.monotonic", return_value=100) as clock,
                 ):
                     monitor._poll_active_response(state)
@@ -531,7 +533,7 @@ class BrowserMonitorTests(unittest.TestCase):
         monitor.response_finished.connect(lambda *args: finished.append(args))
         monitor.response_changed.connect(lambda *args: changes.append(args))
         with (
-            patch.object(monitor, "_response_snapshot", return_value=
+            patch.object(monitor.provider, "response_snapshot", return_value=
                          _ResponseSnapshot(False, False, False, "", "Waiting")) as snapshot,
             patch("live_gpt.browser.time.monotonic", return_value=599) as clock,
         ):
@@ -550,7 +552,7 @@ class BrowserMonitorTests(unittest.TestCase):
         state = _MonitorState(active_response=_ActiveResponse(page=Mock(), turn_marker_before=None))
         finished = []
         monitor.response_finished.connect(lambda *args: finished.append(args))
-        with patch.object(monitor, "_response_snapshot", side_effect=RuntimeError("Page closed")):
+        with patch.object(monitor.provider, "response_snapshot", side_effect=RuntimeError("Page closed")):
             monitor._poll_active_response(state)
         self.assertIsNone(state.active_response)
         self.assertEqual(finished, [(False, "Could not read ChatGPT's reply: Page closed")])
@@ -572,7 +574,7 @@ class BrowserMonitorTests(unittest.TestCase):
             Mock(count=lambda: 1, last=turn) if 'data-turn="assistant"' in selector
             else Mock(first=Mock(is_visible=lambda: False))
         )
-        snapshot = BrowserMonitor._response_snapshot(page, "old-turn")
+        snapshot = ChatGPTProvider.response_snapshot(page, "old-turn")
         self.assertEqual(snapshot.text, "Read the documentation")
         self.assertEqual(snapshot.links, (("documentation", "https://example.com/docs"),))
 
@@ -763,7 +765,7 @@ class BrowserMonitorTests(unittest.TestCase):
 
         page.locator.side_effect = locate
 
-        text = BrowserMonitor._read_composer_text(page)
+        text = ChatGPTProvider.read_composer_text(page)
 
         self.assertEqual(text, "Visible dictated text")
         visible_composer.wait_for.assert_called_once_with(
@@ -1004,12 +1006,12 @@ class BrowserMonitorTests(unittest.TestCase):
         page.title.return_value = "Conversation"
         browser = Mock()
         browser.contexts = [Mock(pages=[page])]
-        first = BrowserMonitor._collect_chatgpt_tabs(
+        first = BrowserMonitor()._collect_tabs(
             browser,
             FakePlaywrightError,
             {page.url: "Conversation"},
         )
-        second = BrowserMonitor._collect_chatgpt_tabs(
+        second = BrowserMonitor()._collect_tabs(
             browser,
             FakePlaywrightError,
             {},
@@ -1021,7 +1023,7 @@ class BrowserMonitorTests(unittest.TestCase):
         page.title.assert_not_called()
         page.emulate_media.assert_not_called()
         page.url = "https://chatgpt.com/c/new-conversation"
-        changed = BrowserMonitor._collect_chatgpt_tabs(browser, FakePlaywrightError, {}, first)
+        changed = BrowserMonitor()._collect_tabs(browser, FakePlaywrightError, {}, first)
         self.assertEqual(changed[0]["title"], "ChatGPT")
 
     def test_send_request_targets_selected_chatgpt_page(self) -> None:
@@ -1111,8 +1113,8 @@ class BrowserMonitorTests(unittest.TestCase):
 
         page.locator.side_effect = locate
 
-        with patch.object(BrowserMonitor, "_wait_for_screenshot_upload"):
-            BrowserMonitor._send_to_chatgpt_page(
+        with patch.object(ChatGPTProvider, "_wait_for_screenshot_upload"):
+            ChatGPTProvider.send(
                 page,
                 "Describe this screenshot",
                 b"png bytes",
@@ -1145,10 +1147,10 @@ class BrowserMonitorTests(unittest.TestCase):
         page.locator.side_effect = locate
 
         with (
-            patch.object(BrowserMonitor, "_clear_chatgpt_attachments") as clear,
-            patch.object(BrowserMonitor, "_wait_for_screenshot_upload"),
+            patch.object(ChatGPTProvider, "clear_attachments") as clear,
+            patch.object(ChatGPTProvider, "_wait_for_screenshot_upload"),
         ):
-            BrowserMonitor._send_to_chatgpt_page(
+            ChatGPTProvider.send(
                 page,
                 "Dictated prompt",
                 preserve_attachments=True,
@@ -1167,9 +1169,9 @@ class BrowserMonitorTests(unittest.TestCase):
         monitor = BrowserMonitor()
 
         with (
-            patch.object(BrowserMonitor, "_clear_chatgpt_attachments") as clear,
-            patch.object(BrowserMonitor, "_paste_screenshot") as paste,
-            patch.object(BrowserMonitor, "_wait_for_screenshot_upload"),
+            patch.object(ChatGPTProvider, "clear_attachments") as clear,
+            patch.object(ChatGPTProvider, "paste_screenshot") as paste,
+            patch.object(ChatGPTProvider, "_wait_for_screenshot_upload"),
         ):
             monitor.request_replace_attachment(str(id(page)), b"webp bytes")
             monitor._process_attachment_requests(browser, FakePlaywrightError)
@@ -1180,11 +1182,11 @@ class BrowserMonitorTests(unittest.TestCase):
     def test_failed_preupload_retries_original_bytes_before_sending(self) -> None:
         page = Mock()
         with (
-            patch.object(BrowserMonitor, "_wait_for_screenshot_upload", side_effect=[RuntimeError("Screenshot upload failed"), None]),
-            patch.object(BrowserMonitor, "_clear_chatgpt_attachments") as clear,
-            patch.object(BrowserMonitor, "_paste_screenshot") as paste,
+            patch.object(ChatGPTProvider, "_wait_for_screenshot_upload", side_effect=[RuntimeError("Screenshot upload failed"), None]),
+            patch.object(ChatGPTProvider, "clear_attachments") as clear,
+            patch.object(ChatGPTProvider, "paste_screenshot") as paste,
         ):
-            BrowserMonitor._ensure_screenshot_uploaded(page, b"original capture", preserve=True)
+            ChatGPTProvider.upload_screenshot(page, b"original capture", preserve=True)
         clear.assert_called_once_with(page)
         paste.assert_called_once_with(page, b"original capture")
 
@@ -1196,11 +1198,11 @@ class BrowserMonitorTests(unittest.TestCase):
         results = []
         monitor.send_finished.connect(lambda *args: results.append(args))
         with (
-            patch.object(monitor, "_assistant_turn_marker", return_value="old"),
-            patch.object(BrowserMonitor, "_usage_limit_message", return_value=""),
-            patch.object(BrowserMonitor, "_clear_chatgpt_attachments"),
-            patch.object(BrowserMonitor, "_paste_screenshot") as paste,
-            patch.object(BrowserMonitor, "_wait_for_screenshot_upload", side_effect=RuntimeError("Screenshot upload failed")),
+            patch.object(monitor.provider, "turn_marker", return_value="old"),
+            patch.object(ChatGPTProvider, "usage_limit_message", return_value=""),
+            patch.object(ChatGPTProvider, "clear_attachments"),
+            patch.object(ChatGPTProvider, "paste_screenshot") as paste,
+            patch.object(ChatGPTProvider, "_wait_for_screenshot_upload", side_effect=RuntimeError("Screenshot upload failed")),
         ):
             monitor.request_send(str(id(page)), "Keep my prompt", b"original")
             monitor._process_send_requests(Mock(contexts=[Mock(pages=[page])]), FakePlaywrightError, state)
@@ -1219,7 +1221,7 @@ class BrowserMonitorTests(unittest.TestCase):
                 monitor.local_voice_announcement.connect(notices.append)
                 thinking = _ResponseSnapshot(False, True, False, "", "正在思考")
                 searching = _ResponseSnapshot(False, True, False, "", "Searching the web")
-                with patch.object(monitor, "_response_snapshot", return_value=thinking) as snapshot, patch("live_gpt.browser.time.monotonic") as clock:
+                with patch.object(monitor.provider, "response_snapshot", return_value=thinking) as snapshot, patch("live_gpt.browser.time.monotonic") as clock:
                     for moment in (0, 59, 60, 119, 120):
                         clock.return_value = moment
                         monitor._poll_active_response(state)
@@ -1245,7 +1247,7 @@ class BrowserMonitorTests(unittest.TestCase):
         self.assertIsNone(state.active_response)
         self.assertIn("media.pause()", page.evaluate.call_args.args[0])
         self.assertEqual(finished, [(False, "Playback stopped")])
-        with patch.object(monitor, "_click_read_aloud") as read:
+        with patch.object(monitor.provider, "click_read_aloud") as read:
             monitor._poll_active_response(state)
         read.assert_not_called()
 
@@ -1291,7 +1293,7 @@ class BrowserMonitorTests(unittest.TestCase):
 
         monitor.request_stop_reading()
         monitor._stop_active_reading(state)
-        with patch.object(monitor, "_click_read_aloud") as read:
+        with patch.object(monitor.provider, "click_read_aloud") as read:
             monitor._poll_active_response(state)
 
         self.assertIsNone(state.active_response)
@@ -1351,13 +1353,13 @@ class BrowserMonitorTests(unittest.TestCase):
             return state
 
         with (
-            patch.object(monitor, "_cancel_existing_dictation"),
-            patch.object(monitor, "_read_composer_text", return_value="Original text"),
-            patch.object(monitor, "_clear_chatgpt_attachments", side_effect=lambda _page: events.append("clear")),
-            patch.object(monitor, "_paste_screenshot", side_effect=lambda _page, _bytes: events.append("paste")) as paste,
-            patch.object(monitor, "_usage_limit_message", return_value=""),
-            patch.object(monitor, "_screenshot_upload_state", side_effect=upload_state),
-            patch.object(monitor, "_start_browser_dictation", side_effect=lambda _page: events.append("start")),
+            patch.object(monitor.provider, "cancel_existing_dictation"),
+            patch.object(monitor.provider, "read_composer_text", return_value="Original text"),
+            patch.object(monitor.provider, "clear_attachments", side_effect=lambda _page: events.append("clear")),
+            patch.object(monitor.provider, "paste_screenshot", side_effect=lambda _page, _bytes: events.append("paste")) as paste,
+            patch.object(monitor.provider, "usage_limit_message", return_value=""),
+            patch.object(monitor.provider, "_screenshot_upload_state", side_effect=upload_state),
+            patch.object(monitor.provider, "start_dictation", side_effect=lambda _page: events.append("start")),
         ):
             monitor.request_clear_attachments(str(id(page)))
             monitor.request_start_dictation(str(id(page)), b"screenshot")
@@ -1378,13 +1380,13 @@ class BrowserMonitorTests(unittest.TestCase):
                 results = []
                 monitor.dictation_started.connect(lambda *args: results.append(args))
                 with (
-                    patch.object(monitor, "_cancel_existing_dictation"),
-                    patch.object(monitor, "_read_composer_text", return_value=""),
-                    patch.object(monitor, "_clear_chatgpt_attachments"),
-                    patch.object(monitor, "_paste_screenshot"),
-                    patch.object(monitor, "_usage_limit_message", return_value=""),
-                    patch.object(monitor, "_screenshot_upload_state", return_value=state),
-                    patch.object(monitor, "_start_browser_dictation") as start,
+                    patch.object(monitor.provider, "cancel_existing_dictation"),
+                    patch.object(monitor.provider, "read_composer_text", return_value=""),
+                    patch.object(monitor.provider, "clear_attachments"),
+                    patch.object(monitor.provider, "paste_screenshot"),
+                    patch.object(monitor.provider, "usage_limit_message", return_value=""),
+                    patch.object(monitor.provider, "_screenshot_upload_state", return_value=state),
+                    patch.object(monitor.provider, "start_dictation") as start,
                 ):
                     monitor.request_start_dictation(str(id(page)), b"screenshot")
                     monitor._process_dictation_requests(browser, FakePlaywrightError)
@@ -1395,10 +1397,10 @@ class BrowserMonitorTests(unittest.TestCase):
         monitor = BrowserMonitor()
         page = Mock()
         with (
-            patch.object(monitor, "_usage_limit_message", return_value=""),
-            patch.object(monitor, "_screenshot_upload_state", return_value="ready"),
+            patch.object(monitor.provider, "usage_limit_message", return_value=""),
+            patch.object(monitor.provider, "_screenshot_upload_state", return_value="ready"),
         ):
-            monitor._wait_for_screenshot_attachment(page)
+            monitor.provider.wait_for_screenshot_attachment(page)
         page.wait_for_timeout.assert_not_called()
 
     def test_cancelled_queued_start_does_not_touch_browser(self) -> None:
@@ -1422,12 +1424,12 @@ class BrowserMonitorTests(unittest.TestCase):
         monitor.dictation_finished.connect(lambda *args: finished.append(args))
         cancelled = monitor.request_start_dictation(str(id(page)), b"screenshot")
         with (
-            patch.object(monitor, "_cancel_existing_dictation", return_value=False),
-            patch.object(monitor, "_read_composer_text", return_value="Original text"),
-            patch.object(monitor, "_clear_chatgpt_attachments") as clear,
-            patch.object(monitor, "_paste_screenshot", side_effect=lambda *_args: cancelled.set()),
-            patch.object(monitor, "_start_browser_dictation") as start,
-            patch.object(monitor, "_usage_limit_message", return_value=""),
+            patch.object(monitor.provider, "cancel_existing_dictation", return_value=False),
+            patch.object(monitor.provider, "read_composer_text", return_value="Original text"),
+            patch.object(monitor.provider, "clear_attachments") as clear,
+            patch.object(monitor.provider, "paste_screenshot", side_effect=lambda *_args: cancelled.set()),
+            patch.object(monitor.provider, "start_dictation") as start,
+            patch.object(monitor.provider, "usage_limit_message", return_value=""),
         ):
             monitor._process_dictation_requests(browser, FakePlaywrightError)
         start.assert_not_called()
@@ -1453,9 +1455,9 @@ class BrowserMonitorTests(unittest.TestCase):
         results = []
         monitor.dictation_finished.connect(lambda *args: results.append(args))
         with (
-            patch.object(monitor, "_cancel_existing_dictation", return_value=False),
-            patch.object(monitor, "_read_composer_text", return_value=""),
-            patch.object(monitor, "_first_visible_locator", return_value=microphone),
+            patch.object(monitor.provider, "cancel_existing_dictation", return_value=False),
+            patch.object(monitor.provider, "read_composer_text", return_value=""),
+            patch.object(monitor.provider, "_first_visible_locator", return_value=microphone),
         ):
             monitor._process_dictation_requests(browser, FakePlaywrightError)
         microphone.click.assert_not_called()
@@ -1470,9 +1472,9 @@ class BrowserMonitorTests(unittest.TestCase):
         results = []
         monitor.dictation_finished.connect(lambda *args: results.append(args))
         with (
-            patch.object(monitor, "_cancel_existing_dictation", side_effect=[False, True]) as cancel,
-            patch.object(monitor, "_read_composer_text", return_value="Original text"),
-            patch.object(monitor, "_start_browser_dictation", side_effect=lambda _page: cancelled.set()),
+            patch.object(monitor.provider, "cancel_existing_dictation", side_effect=[False, True]) as cancel,
+            patch.object(monitor.provider, "read_composer_text", return_value="Original text"),
+            patch.object(monitor.provider, "start_dictation", side_effect=lambda _page: cancelled.set()),
         ):
             monitor._process_dictation_requests(browser, FakePlaywrightError)
         self.assertEqual(cancel.call_count, 2)
@@ -1502,8 +1504,8 @@ class BrowserMonitorTests(unittest.TestCase):
         page.locator.side_effect = locate
         monitor = BrowserMonitor()
 
-        monitor._cancel_existing_dictation(page)
-        monitor._start_browser_dictation(page)
+        monitor.provider.cancel_existing_dictation(page)
+        monitor.provider.start_dictation(page)
 
         cancel.click.assert_called_once_with(timeout=1_000, force=True, no_wait_after=True)
         microphone.click.assert_called_once_with(timeout=1_000, force=True, no_wait_after=True)
@@ -1511,9 +1513,9 @@ class BrowserMonitorTests(unittest.TestCase):
     def test_dictation_click_still_requires_listening_controls(self) -> None:
         monitor = BrowserMonitor()
         microphone = Mock()
-        with patch.object(monitor, "_first_visible_locator", side_effect=[microphone, None]):
+        with patch.object(monitor.provider, "_first_visible_locator", side_effect=[microphone, None]):
             with self.assertRaisesRegex(RuntimeError, "ChatGPT did not start listening"):
-                monitor._start_browser_dictation(Mock())
+                monitor.provider.start_dictation(Mock())
         microphone.click.assert_called_once_with(timeout=1_000, force=True, no_wait_after=True)
 
     def test_stale_cancel_recovers_after_control_detaches_and_composer_is_idle(self):
@@ -1522,8 +1524,8 @@ class BrowserMonitorTests(unittest.TestCase):
         monitor = BrowserMonitor()
         button = Mock()
         button.evaluate.side_effect = PlaywrightTimeoutError("Control was removed")
-        with patch.object(monitor, "_dictation_result_snapshot", return_value=("Original text", True)):
-            self.assertFalse(monitor._click_dictation_control(Mock(), button, allow_idle=True))
+        with patch.object(monitor.provider, "_dictation_result_snapshot", return_value=("Original text", True)):
+            self.assertFalse(monitor.provider._click_dictation_control(Mock(), button, allow_idle=True))
         button.click.assert_not_called()
 
     def test_busy_stale_cancel_still_fails_if_composer_never_becomes_idle(self):
@@ -1532,10 +1534,10 @@ class BrowserMonitorTests(unittest.TestCase):
         button.evaluate.return_value = False
         with (
             patch("live_gpt.browser.time.monotonic", side_effect=[0, 0, 6]),
-            patch.object(monitor, "_dictation_result_snapshot", return_value=(None, False)),
+            patch.object(monitor.provider, "_dictation_result_snapshot", return_value=(None, False)),
         ):
             with self.assertRaisesRegex(RuntimeError, "dictation control is not ready"):
-                monitor._click_dictation_control(Mock(), button, allow_idle=True)
+                monitor.provider._click_dictation_control(Mock(), button, allow_idle=True)
         button.click.assert_not_called()
 
     def test_release_while_stale_cancel_becomes_ready_skips_click(self):
@@ -1552,7 +1554,7 @@ class BrowserMonitorTests(unittest.TestCase):
 
         button.evaluate.side_effect = ready
         with self.assertRaisesRegex(RuntimeError, "Dictation cancelled"):
-            monitor._click_dictation_control(Mock(), button, starting=True, allow_idle=True)
+            monitor.provider._click_dictation_control(Mock(), button, starting=True, allow_idle=True)
         button.click.assert_not_called()
 
     def test_cancel_dictation_restores_original_composer_text(self) -> None:
@@ -1573,7 +1575,7 @@ class BrowserMonitorTests(unittest.TestCase):
         page.locator.side_effect = locate
         monitor = BrowserMonitor()
 
-        text = monitor._cancel_browser_dictation(page, "Original text")
+        text = monitor.provider.cancel_dictation(page, "Original text")
 
         cancel.click.assert_called_once_with(timeout=1_000, force=True, no_wait_after=True)
         composer.fill.assert_called_once_with("Original text")
@@ -1589,8 +1591,8 @@ class BrowserMonitorTests(unittest.TestCase):
         results = []
         monitor.dictation_finished.connect(lambda *args: results.append(args))
         with (
-            patch.object(monitor, "_finish_browser_dictation", side_effect=FakePlaywrightError("Stop failed")),
-            patch.object(monitor, "_cancel_existing_dictation", return_value=True) as cancel,
+            patch.object(monitor.provider, "finish_dictation", side_effect=FakePlaywrightError("Stop failed")),
+            patch.object(monitor.provider, "cancel_existing_dictation", return_value=True) as cancel,
         ):
             monitor.request_finish_dictation(tab_id)
             monitor._process_dictation_requests(browser, FakePlaywrightError)
@@ -1700,7 +1702,7 @@ class BrowserMonitorTests(unittest.TestCase):
         page.locator.side_effect = locate
         monitor = BrowserMonitor()
 
-        text = monitor._finish_browser_dictation(page, "Existing text")
+        text = monitor.provider.finish_dictation(page, "Existing text")
 
         self.assertEqual(text, "Existing text")
         done.click.assert_called_once_with(timeout=1_000, force=True, no_wait_after=True)
@@ -1714,8 +1716,8 @@ class BrowserMonitorTests(unittest.TestCase):
         results = []
         monitor.dictation_finished.connect(lambda *args: results.append(args))
         with (
-            patch.object(monitor, "_first_visible_locator", return_value=Mock()),
-            patch.object(monitor, "_dictation_result_snapshot", return_value=("", True)),
+            patch.object(monitor.provider, "_first_visible_locator", return_value=Mock()),
+            patch.object(monitor.provider, "_dictation_result_snapshot", return_value=("", True)),
         ):
             monitor.request_finish_dictation(str(id(page)))
             monitor._process_dictation_requests(browser, FakePlaywrightError)
@@ -1726,14 +1728,14 @@ class BrowserMonitorTests(unittest.TestCase):
         monitor = BrowserMonitor()
         page = Mock()
         with (
-            patch.object(monitor, "_first_visible_locator", return_value=Mock()),
-            patch.object(monitor, "_dictation_result_snapshot", side_effect=[
+            patch.object(monitor.provider, "_first_visible_locator", return_value=Mock()),
+            patch.object(monitor.provider, "_dictation_result_snapshot", side_effect=[
                 ("", False), ("", False), ("", False),
                 (None, False), ("Delayed words", True),
                 ("Delayed words", True), ("Delayed words", True),
             ]),
         ):
-            self.assertEqual(monitor._finish_browser_dictation(page, ""), "Delayed words")
+            self.assertEqual(monitor.provider.finish_dictation(page, ""), "Delayed words")
         self.assertEqual(page.wait_for_timeout.call_count, 7)
 
     def test_dictation_timeout_includes_slow_browser_calls(self) -> None:
@@ -1747,11 +1749,11 @@ class BrowserMonitorTests(unittest.TestCase):
             return "", False
 
         with (
-            patch.object(monitor, "_first_visible_locator", return_value=Mock()),
-            patch.object(monitor, "_dictation_result_snapshot", side_effect=slow_snapshot),
+            patch.object(monitor.provider, "_first_visible_locator", return_value=Mock()),
+            patch.object(monitor.provider, "_dictation_result_snapshot", side_effect=slow_snapshot),
             patch("live_gpt.browser.time.monotonic", side_effect=lambda: elapsed),
         ):
-            self.assertEqual(monitor._finish_browser_dictation(page, ""), "")
+            self.assertEqual(monitor.provider.finish_dictation(page, ""), "")
         self.assertEqual(page.wait_for_timeout.call_count, 2)
 
     def test_dictation_result_timeout_keeps_responsive_driver_connected(self) -> None:
@@ -1780,12 +1782,12 @@ class BrowserMonitorTests(unittest.TestCase):
 
         page = Mock(wait_for_timeout=Mock(side_effect=wait))
         with (
-            patch.object(monitor, "_first_visible_locator", return_value=Mock()),
-            patch.object(monitor, "_dictation_result_snapshot", return_value=(None, False)),
+            patch.object(monitor.provider, "_first_visible_locator", return_value=Mock()),
+            patch.object(monitor.provider, "_dictation_result_snapshot", return_value=(None, False)),
             patch("live_gpt.browser.time.monotonic", side_effect=lambda: elapsed),
             patch("live_gpt.browser.threading.Timer", side_effect=create_timer),
         ):
-            self.assertEqual(monitor._finish_browser_dictation(page, "Existing text"), "Existing text")
+            self.assertEqual(monitor.provider.finish_dictation(page, "Existing text"), "Existing text")
         self.assertGreaterEqual(elapsed, DICTATION_RESULT_TIMEOUT_MS / 1000)
         stop_transport.assert_not_called()
 
@@ -1793,10 +1795,10 @@ class BrowserMonitorTests(unittest.TestCase):
         monitor = BrowserMonitor()
         page = Mock()
         with (
-            patch.object(monitor, "_first_visible_locator", return_value=Mock()),
-            patch.object(monitor, "_dictation_result_snapshot", return_value=(None, True)),
+            patch.object(monitor.provider, "_first_visible_locator", return_value=Mock()),
+            patch.object(monitor.provider, "_dictation_result_snapshot", return_value=(None, True)),
         ):
-            self.assertEqual(monitor._finish_browser_dictation(page, "Existing text"), "Existing text")
+            self.assertEqual(monitor.provider.finish_dictation(page, "Existing text"), "Existing text")
         self.assertEqual(page.wait_for_timeout.call_count, DICTATION_RESULT_POLL_COUNT)
 
     def test_stopping_monitor_cancels_dictation_wait(self) -> None:
@@ -1804,7 +1806,7 @@ class BrowserMonitorTests(unittest.TestCase):
         monitor.request_stop()
         page = Mock()
 
-        text = monitor._finish_browser_dictation(page, "Existing text")
+        text = monitor.provider.finish_dictation(page, "Existing text")
 
         self.assertEqual(text, "Existing text")
         page.locator.assert_not_called()
@@ -1842,8 +1844,8 @@ class BrowserMonitorTests(unittest.TestCase):
         monitor.reading_started.connect(reading_started.append)
 
         with (
-            patch.object(monitor, "_response_snapshot", return_value=snapshot),
-            patch.object(monitor, "_click_read_aloud", return_value=True) as read,
+            patch.object(monitor.provider, "response_snapshot", return_value=snapshot),
+            patch.object(monitor.provider, "click_read_aloud", return_value=True) as read,
             patch("live_gpt.browser.time.monotonic", return_value=100.0),
         ):
             monitor._poll_active_response(state)
@@ -1889,8 +1891,8 @@ class BrowserMonitorTests(unittest.TestCase):
         )
 
         with (
-            patch.object(monitor, "_response_snapshot", return_value=snapshot),
-            patch.object(monitor, "_click_read_aloud") as read,
+            patch.object(monitor.provider, "response_snapshot", return_value=snapshot),
+            patch.object(monitor.provider, "click_read_aloud") as read,
             patch("live_gpt.browser.time.monotonic", return_value=100.0),
         ):
             monitor._poll_active_response(state)
@@ -1926,7 +1928,7 @@ class BrowserMonitorTests(unittest.TestCase):
             lambda text, final: updates.append((text, final))
         )
 
-        with patch.object(monitor, "_response_snapshot", return_value=snapshot):
+        with patch.object(monitor.provider, "response_snapshot", return_value=snapshot):
             monitor._poll_active_response(state)
 
         self.assertEqual(updates, [(snapshot.text, False)])
@@ -1955,8 +1957,8 @@ class BrowserMonitorTests(unittest.TestCase):
         )
 
         with (
-            patch.object(monitor, "_response_snapshot", return_value=snapshot),
-            patch.object(monitor, "_click_read_aloud", return_value=True) as read,
+            patch.object(monitor.provider, "response_snapshot", return_value=snapshot),
+            patch.object(monitor.provider, "click_read_aloud", return_value=True) as read,
             patch(
                 "live_gpt.browser.time.monotonic",
                 side_effect=[100.0, 101.0, 102.1],
@@ -2108,7 +2110,7 @@ class BrowserMonitorTests(unittest.TestCase):
         page.locator.side_effect = locate
         direct_button.is_visible.return_value = False
 
-        clicked = BrowserMonitor._click_read_aloud(page)
+        clicked = ChatGPTProvider.click_read_aloud(page)
 
         self.assertTrue(clicked)
         turn.hover.assert_not_called()
@@ -2129,7 +2131,7 @@ class BrowserMonitorTests(unittest.TestCase):
         page = Mock()
         page.locator.return_value = turns
 
-        clicked = BrowserMonitor._click_read_aloud(page)
+        clicked = ChatGPTProvider.click_read_aloud(page)
 
         self.assertTrue(clicked)
         direct_button.evaluate.assert_called_once_with(
@@ -2172,7 +2174,7 @@ class BrowserMonitorTests(unittest.TestCase):
 
         page.locator.side_effect = locate_in_page
 
-        snapshot = BrowserMonitor._response_snapshot(page, "previous-turn")
+        snapshot = ChatGPTProvider.response_snapshot(page, "previous-turn")
 
         self.assertTrue(snapshot.has_new_turn)
         self.assertTrue(snapshot.is_generating)
