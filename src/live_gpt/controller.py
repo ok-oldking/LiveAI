@@ -46,6 +46,9 @@ from .voice.workers import (
 
 logger = Logger.get_logger(__name__)
 
+# Characters that can still stream in after a sentence's terminator.
+_SENTENCE_CLOSING_CHARACTERS = frozenset(".!?。！？…\"'”’）)]」』")
+
 @dataclass(frozen=True)
 class _PendingDictationCapture:
     source: CaptureSource | None
@@ -71,6 +74,7 @@ class TrayController:
         self._local_voice_longest_text = ""
         self._local_voice_queued_sentences: list[str] = []
         self._local_voice_seen_sentences: Counter[str] = Counter()
+        self._local_voice_tentative_key = ""
         self._local_voice_interrupted = False
         self._local_voice_error: str | None = None
         self._local_voice_playback_error: str | None = None
@@ -575,11 +579,34 @@ class TrayController:
         # still have separate occurrences and are spoken normally.
         occurrences: Counter[str] = Counter()
         new_sentences = []
+        # A snapshot can end inside a sentence's closing punctuation, e.g.
+        # `“Ready?` before `”` or `Wait.` before `..`. That sentence was
+        # already queued, so its completed form must not be read again.
+        tentative = getattr(self, "_local_voice_tentative_key", "")
         for sentence in sentences:
             key = _speech_text_positions(sentence)[0]
             occurrences[key] += 1
             if occurrences[key] > seen[key]:
+                if (
+                    tentative
+                    and seen[tentative] > 0
+                    and len(key) > len(tentative)
+                    and key.startswith(tentative)
+                    and all(
+                        character in _SENTENCE_CLOSING_CHARACTERS
+                        for character in key[len(tentative):]
+                    )
+                ):
+                    seen[tentative] -= 1
+                    seen[key] += 1
+                    tentative = ""
+                    continue
                 new_sentences.append(sentence)
+        self._local_voice_tentative_key = (
+            _speech_text_positions(sentences[-1])[0]
+            if sentences and not final and _consumed == len(text)
+            else ""
+        )
         if new_sentences and self._local_speech_thread is None:
             if self._ensure_local_speech_worker() is None:
                 return
@@ -1213,6 +1240,7 @@ class TrayController:
         self._local_voice_longest_text = ""
         self._local_voice_queued_sentences = []
         self._local_voice_seen_sentences = Counter()
+        self._local_voice_tentative_key = ""
         preserve_attachments = bool(
             pending_capture is not None and pending_capture.preuploaded
         )

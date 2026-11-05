@@ -41,6 +41,16 @@ def completed_response_sentences(text: str, *, final: bool) -> tuple[list[str], 
         ):
             continue
         if (
+            not final
+            and match.end() == len(text)
+            and match.group() == "."
+            and punctuation_start > 0
+            and text[punctuation_start - 1].isdigit()
+        ):
+            # "costs 3." may still stream into "costs 3.5 dollars."; speaking
+            # it now would read the start of that sentence twice.
+            break
+        if (
             match.end() < len(text)
             and not text[match.end()].isspace()
             and not any(character in "。！？" for character in match.group())

@@ -95,6 +95,7 @@ class _ActiveResponse:
     turn_marker_before: str | None
     started_at: float = field(default_factory=time.monotonic)
     last_text: str = ""
+    last_spoken_text: str = ""
     last_status: str = ""
     last_text_changed_at: float = field(default_factory=time.monotonic)
     completion_candidate_at: float | None = None
@@ -1061,8 +1062,10 @@ class BrowserMonitor(QThread):
         response = state.active_response
         if not self._use_browser_voice:
             self.local_voice_announcement.emit(message)
-            if response is not None and response.last_text:
-                self.local_voice_updated.emit(response.last_text, True)
+            # Close local voice with the same code-free text it has been
+            # reading; the raw text would re-queue every differing sentence.
+            if response is not None and response.last_spoken_text:
+                self.local_voice_updated.emit(response.last_spoken_text, True)
         self.response_finished.emit(False, message)
         state.active_response = None
 
@@ -1143,6 +1146,8 @@ class BrowserMonitor(QThread):
             self.response_html_changed.emit(snapshot.html)
         # Local TTS reads the reply without its code blocks.
         spoken_text = snapshot.spoken_text
+        if spoken_text:
+            response.last_spoken_text = spoken_text
         if text_changed and not self._use_browser_voice and spoken_text:
             self.local_voice_updated.emit(spoken_text, False)
         completion_candidate = (

@@ -304,6 +304,42 @@ class LocalSpeechThreadTests(unittest.TestCase):
         ])
         self.assertIs(queued[-1], worker._FINISHED)
 
+    def test_closing_punctuation_streamed_later_does_not_repeat_sentence(self) -> None:
+        controller = TrayController.__new__(TrayController)
+        controller._local_voice_longest_text = ""
+        controller._local_voice_queued_sentences = []
+        worker = _QueuedLocalSpeechThread(Mock(), "model", "speaker", "en")
+        controller._local_speech_thread = worker
+
+        controller._update_local_voice('He asked "Ready?', False)
+        controller._update_local_voice('He asked "Ready?" Then wait.', False)
+        controller._update_local_voice('He asked "Ready?" Then wait...', False)
+        controller._update_local_voice('He asked "Ready?" Then wait... “装好了吗？', False)
+        controller._update_local_voice('He asked "Ready?" Then wait... “装好了吗？”好', False)
+        controller._update_local_voice('He asked "Ready?" Then wait... “装好了吗？”好。', True)
+
+        queued = []
+        while not worker._sentences.empty():
+            queued.append(worker._sentences.get_nowait())
+        self.assertEqual(
+            queued[:-1], ['He asked "Ready?', "Then wait.", "“装好了吗？", "好。"]
+        )
+        self.assertIs(queued[-1], worker._FINISHED)
+
+    def test_number_at_snapshot_end_waits_for_the_rest_of_the_sentence(self) -> None:
+        controller = TrayController.__new__(TrayController)
+        controller._local_voice_longest_text = ""
+        controller._local_voice_queued_sentences = []
+        worker = _QueuedLocalSpeechThread(Mock(), "model", "speaker", "en")
+        controller._local_speech_thread = worker
+
+        controller._update_local_voice("It costs 3.", False)
+        controller._update_local_voice("It costs 3.5 dollars.", False)
+        controller._update_local_voice("It costs 3.5 dollars.", True)
+
+        self.assertEqual(worker._sentences.get_nowait(), "It costs 3.5 dollars.")
+        self.assertIs(worker._sentences.get_nowait(), worker._FINISHED)
+
     def test_intentional_sentence_repetition_is_still_read(self) -> None:
         controller = TrayController.__new__(TrayController)
         controller._local_voice_longest_text = ""

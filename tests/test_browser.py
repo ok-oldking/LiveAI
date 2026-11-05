@@ -1254,7 +1254,7 @@ class BrowserMonitorTests(unittest.TestCase):
     def test_reply_timeout_announces_error_before_closing_local_queue(self) -> None:
         monitor = BrowserMonitor()
         monitor.set_use_browser_voice(False)
-        state = _MonitorState(active_response=_ActiveResponse(page=Mock(), turn_marker_before=None, started_at=0, last_text="Partial"))
+        state = _MonitorState(active_response=_ActiveResponse(page=Mock(), turn_marker_before=None, started_at=0, last_text="Partial", last_spoken_text="Partial"))
         events = []
         monitor.local_voice_announcement.connect(lambda message: events.append(("notice", message)))
         monitor.local_voice_updated.connect(lambda *_args: events.append(("final",)))
