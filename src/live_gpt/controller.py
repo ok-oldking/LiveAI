@@ -547,6 +547,11 @@ class TrayController:
             return
         text = text.strip()
         if not text:
+            # A final reply with nothing to read (e.g. only code) still has to
+            # close a queue that an announcement may have opened.
+            worker = self._local_speech_thread
+            if final and isinstance(worker, _QueuedLocalSpeechThread):
+                worker.finish_queue()
             return
         if not final and len(text) < len(self._local_voice_longest_text):
             logger.debug(

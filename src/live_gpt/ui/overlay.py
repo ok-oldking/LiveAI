@@ -883,6 +883,11 @@ class OverlayWindow(QMainWindow):
         self.transcript_area.update_response(text)
         if not self._subtitle_mode_active:
             self.begin_response_display(message=status)
+        if self._subtitle_reading_active and self._reading_character_progress:
+            # Local voice reports offsets into the text it speaks (which omits
+            # code blocks); its own progress updates keep the subtitle text.
+            self.set_status(tr("Reading aloud…"))
+            return
         self._reading_full_text = text
         if self._subtitle_reading_active:
             self._reading_fraction = min(

@@ -933,7 +933,10 @@ class BrowserLocalizationTests(unittest.TestCase):
                     monitor._poll_active_response(state)
                 self.assertTrue(subtitles)
                 self.assertTrue(all(text == snapshot.text for text in subtitles))
-                self.assertEqual(speech, [(snapshot.text, False), (snapshot.text, True)])
+                # Code blocks are displayed but never read aloud; inline code is.
+                spoken = "把这行放进宏里，点击就能重载界面：\n\nPlain text 是正文。Python 也是正文。"
+                self.assertEqual(snapshot.speech, spoken)
+                self.assertEqual(speech, [(spoken, False), (spoken, True)])
                 # Extraction must leave the original browser response intact.
                 self.assertEqual(
                     self.page.locator('[data-markdown-copy="exclude"]').count(), 1
@@ -952,6 +955,21 @@ class BrowserLocalizationTests(unittest.TestCase):
         self.assertNotIn("Copy", text)
         self.assertIn("/startattack\n/cast 神圣打击", text)
         self.assertEqual(self.page.locator('button[aria-label="Copy"]').count(), 1)
+
+    def test_speech_text_omits_code_blocks(self):
+        reply = (Path(__file__).parent / "fixtures" / "chatgpt_code_reply.html").read_text(encoding="utf-8")
+        self.page.set_content(reply)
+        text, _html, speech = ChatGPTProvider._reply_content(self.page.locator('.markdown'))
+        self.assertIn("/startattack", text)
+        self.assertNotIn("/startattack", speech)
+        self.assertNotIn("#showtooltip", speech)
+        self.page.set_content(
+            '<div id="reply"><p>Run this:</p><pre><code class="language-python">print("hi")</code></pre>'
+            '<p>Use <code>pip</code> first.</p></div>'
+        )
+        text, _html, speech = ChatGPTProvider._reply_content(self.page.locator('#reply'))
+        self.assertIn('print("hi")', text)
+        self.assertEqual(speech, "Run this:\n\nUse pip first.")
 
     def test_completion_and_read_aloud_menu_in_each_language(self):
         for copy, more, read in (

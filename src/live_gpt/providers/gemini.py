@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from ..logger import Logger
 from .base import NullProviderContext, ProviderContext, ResponseSnapshot
-from .dom import click_when_ready, element_text, locator_is_visible, read_rich_content
+from .dom import click_when_ready, element_text, locator_is_visible, read_reply_content
 
 
 logger = Logger.get_logger(__name__)
@@ -159,11 +159,11 @@ class GeminiProvider:
 
         markdown = response.locator(RESPONSE_TEXT_SELECTOR).last
         if int(markdown.count()) > 0:
-            text, reply_html = read_rich_content(markdown)
+            text, reply_html, speech = read_reply_content(markdown)
             # The reply's live region stays busy while tokens stream in.
             is_generating = is_generating or markdown.get_attribute("aria-busy") == "true"
         else:
-            text, reply_html = "", ""
+            text, reply_html, speech = "", "", ""
         anchors = markdown.locator("a[href]").evaluate_all(
             "elements => elements.map(a => [a.innerText, a.href])"
         ) if text else []
@@ -180,6 +180,7 @@ class GeminiProvider:
             status="Responding…" if is_generating or not has_controls else "Finishing reply…",
             links=links,
             html=reply_html,
+            speech=speech,
         )
 
     @staticmethod

@@ -14,7 +14,7 @@ from .base import (
     ResponseSnapshot,
     UsageLimitError,
 )
-from .dom import click_when_ready, locator_is_visible, read_rich_content
+from .dom import click_when_ready, locator_is_visible, read_reply_content, read_rich_content
 from .media import MEDIA_PROGRESS_SCRIPT, MEDIA_TRACKER_SCRIPT
 
 
@@ -728,9 +728,10 @@ class ChatGPTProvider:
             ))
         ).last
         has_markdown = int(markdown.count()) > 0
-        text, reply_html = cls._response_content(markdown if has_markdown else turn)
+        text, reply_html, speech = cls._reply_content(markdown if has_markdown else turn)
         if not has_markdown:
             text = cls._response_text_from_turn(text)
+            speech = cls._response_text_from_turn(speech)
         completion_controls = turn.locator(
             'button[data-testid="copy-turn-action-button"], '
             + _label_selectors("button", "Copy response", "复制回复", "複製回覆")
@@ -754,6 +755,7 @@ class ChatGPTProvider:
             status=live_status or ("Responding…" if is_generating else "Finishing reply…"),
             links=links,
             html=reply_html,
+            speech=speech,
         )
 
     @staticmethod
@@ -783,6 +785,7 @@ class ChatGPTProvider:
         return "\n".join(lines).strip()
 
     _response_content = staticmethod(read_rich_content)
+    _reply_content = staticmethod(read_reply_content)
 
     @staticmethod
     def is_thinking_status(status: str) -> bool:

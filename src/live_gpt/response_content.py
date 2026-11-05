@@ -268,26 +268,29 @@ element => {
         'hr', 'sub', 'sup']);
     const blocks = new Set(['p', 'div', 'section', 'article', 'li', 'blockquote',
         'pre', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'tr']);
+    // `speech` mirrors `text` but leaves out code blocks (including "Plain
+    // text" blocks), which are shown on screen but must not be read aloud.
     const serialize = node => {
         if (node.nodeType === Node.TEXT_NODE) {
-            return {text: node.textContent, html: escape(node.textContent)};
+            return {text: node.textContent, speech: node.textContent, html: escape(node.textContent)};
         }
-        if (node.nodeType !== Node.ELEMENT_NODE) return {text: '', html: ''};
+        if (node.nodeType !== Node.ELEMENT_NODE) return {text: '', speech: '', html: ''};
         const tag = node.tagName.toLowerCase();
         if (tag === 'img') {
             const source = node.getAttribute('src') || '';
             if (!webURL(source) && !/^data:image\/(?:png|jpe?g|gif|webp|bmp);base64,/i.test(source)) {
-                return {text: '', html: ''};
+                return {text: '', speech: '', html: ''};
             }
             const size = ['width', 'height'].map(attr => {
                 const value = node.getAttribute(attr);
                 return /^[1-9][0-9]*$/.test(value || '') ? ` ${attr}="${value}"` : '';
             }).join('');
-            return {text: '', html: `<img src="${escape(source)}" alt="${escape(node.getAttribute('alt') || '')}"${size}>`};
+            return {text: '', speech: '', html: `<img src="${escape(source)}" alt="${escape(node.getAttribute('alt') || '')}"${size}>`};
         }
         if (node.matches('[data-d-component="grid"]') && node.querySelector('img')) {
             const cells = Array.from(node.children, serialize);
-            return {text: cells.map(cell => cell.text).join(''), html:
+            return {text: cells.map(cell => cell.text).join(''),
+                speech: cells.map(cell => cell.speech).join(''), html:
                 '<table border="0" cellspacing="8" cellpadding="0"><tr>' +
                 cells.map(cell => `<td>${cell.html}</td>`).join('') + '</tr></table>'};
         }
@@ -296,15 +299,16 @@ element => {
             const text = code.textContent || '';
             const language = node.getAttribute('data-live-gpt-language');
             const attrs = language ? ` data-live-gpt-language="${escape(language)}"` : '';
-            return {text: text + '\n', html: `<pre${attrs}><code>${escape(text)}</code></pre>`};
+            return {text: text + '\n', speech: '\n', html: `<pre${attrs}><code>${escape(text)}</code></pre>`};
         }
         const parts = Array.from(node.childNodes, serialize);
         let text = parts.map(part => part.text).join('');
+        let speech = parts.map(part => part.speech).join('');
         let html = parts.map(part => part.html).join('');
-        if (tag === 'p' && !text.trim() && !html.includes('<br>') && !html.includes('<img ')) return {text: '', html: ''};
-        if (tag === 'br' || tag === 'hr') text = '\n';
-        else if (tag === 'td' || tag === 'th') text += '\t';
-        else if (blocks.has(tag) && !node.hasAttribute('data-d-inline')) text += '\n';
+        if (tag === 'p' && !text.trim() && !html.includes('<br>') && !html.includes('<img ')) return {text: '', speech: '', html: ''};
+        if (tag === 'br' || tag === 'hr') text = speech = '\n';
+        else if (tag === 'td' || tag === 'th') { text += '\t'; speech += '\t'; }
+        else if (blocks.has(tag) && !node.hasAttribute('data-d-inline')) { text += '\n'; speech += '\n'; }
         if (tag === 'a' || node.matches('[data-d-component="link"]')) {
             let url;
             try { url = new URL(node.getAttribute('href') || node.getAttribute('data-href') || node.getAttribute('data-url'), element.ownerDocument.baseURI); }
@@ -330,10 +334,12 @@ element => {
             }
             html = ['br', 'hr'].includes(tag) ? `<${tag}>` : `<${tag}${attrs}>${html}</${tag}>`;
         }
-        return {text, html};
+        return {text, speech, html};
     };
     const result = serialize(clone);
-    result.text = result.text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    const tidy = value => value.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    result.text = tidy(result.text);
+    result.speech = tidy(result.speech);
     if (citations.size) {
         result.html += '<p>' + Array.from(citations.values(), ({url, label}) =>
             `<a href="${escape(url)}" target="_blank" rel="noopener noreferrer">${escape(label)}</a>`

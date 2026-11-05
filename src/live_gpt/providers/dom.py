@@ -47,14 +47,30 @@ def click_when_ready(page: Any, button: Any, *, timeout: int = 15_000) -> None:
         page.wait_for_timeout(min(100, remaining))
 
 
-def read_rich_content(element: Any) -> tuple[str, str]:
-    """Return speakable text and display HTML for a rendered reply."""
+def read_reply_content(element: Any) -> tuple[str, str, str]:
+    """Return display text, display HTML and speech text for a rendered reply.
+
+    The speech text omits code blocks, which are shown but not read aloud.
+    """
     content = element.evaluate(RESPONSE_CONTENT_SCRIPT)
     if isinstance(content, dict):
-        return str(content.get("text", "")).strip(), str(content.get("html", ""))
+        text = str(content.get("text", "")).strip()
+        speech = content.get("speech")
+        return (
+            text,
+            str(content.get("html", "")),
+            str(speech).strip() if isinstance(speech, str) else text,
+        )
     if isinstance(content, str):
-        return content.strip(), ""
-    return element.inner_text(timeout=1_000).strip(), ""
+        return content.strip(), "", content.strip()
+    text = element.inner_text(timeout=1_000).strip()
+    return text, "", text
+
+
+def read_rich_content(element: Any) -> tuple[str, str]:
+    """Return display text and display HTML for a rendered reply."""
+    text, html, _speech = read_reply_content(element)
+    return text, html
 
 
 def element_text(element: Any) -> str:
@@ -63,4 +79,7 @@ def element_text(element: Any) -> str:
     return str(text or "").strip()
 
 
-__all__ = ["click_when_ready", "element_text", "locator_is_visible", "read_rich_content"]
+__all__ = [
+    "click_when_ready", "element_text", "locator_is_visible",
+    "read_reply_content", "read_rich_content",
+]

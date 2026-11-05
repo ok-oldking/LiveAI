@@ -1141,8 +1141,10 @@ class BrowserMonitor(QThread):
             self.response_links_changed.emit(snapshot.links)
         if html_changed:
             self.response_html_changed.emit(snapshot.html)
-        if text_changed and not self._use_browser_voice and snapshot.text:
-            self.local_voice_updated.emit(snapshot.text, False)
+        # Local TTS reads the reply without its code blocks.
+        spoken_text = snapshot.spoken_text
+        if text_changed and not self._use_browser_voice and spoken_text:
+            self.local_voice_updated.emit(spoken_text, False)
         completion_candidate = (
             snapshot.has_new_turn
             and (bool(snapshot.text) or "<img " in snapshot.html)
@@ -1181,18 +1183,24 @@ class BrowserMonitor(QThread):
             return
 
         if not self._use_browser_voice:
+            if not spoken_text:
+                # Nothing but code: show it, read nothing.
+                self.response_finished.emit(True, "Reply complete")
+                self.local_voice_updated.emit("", True)
+                state.active_response = None
+                return
             logger.info(
                 "Response is stable; handing reply to local voice "
-                f"characters={len(snapshot.text)}"
+                f"characters={len(spoken_text)}"
             )
             # Reserve subtitle visibility while local synthesis prepares its
             # first audio, before the UI leaves the responding state.
-            self.local_voice_updated.emit(snapshot.text, True)
+            self.local_voice_updated.emit(spoken_text, True)
             self.response_finished.emit(
                 True,
                 "Reply complete · Local voice queued",
             )
-            self.local_voice_requested.emit(snapshot.text)
+            self.local_voice_requested.emit(spoken_text)
             state.active_response = None
             return
 

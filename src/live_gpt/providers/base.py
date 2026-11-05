@@ -33,6 +33,12 @@ class ResponseSnapshot:
     links: tuple[tuple[str, str], ...] = ()
     error_message: str = ""
     html: str = ""
+    # Text for local TTS, without code blocks; None means use `text`.
+    speech: str | None = None
+
+    @property
+    def spoken_text(self) -> str:
+        return self.text if self.speech is None else self.speech
 
 
 class ProviderContext(Protocol):

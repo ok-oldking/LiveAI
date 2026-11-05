@@ -2929,7 +2929,10 @@ class TrayControllerBrowserTests(unittest.TestCase):
 
             self.assertTrue(window._subtitle_reading_active)
             self.assertEqual(window.transcript_area.placeholderText(), "Reading aloud…")
-            self.assertAlmostEqual(window._reading_fraction, 15 / len(longer))
+            # Local voice owns the subtitle text: it speaks a code-free copy
+            # of the reply, so display updates must not shift its offsets.
+            self.assertEqual(window._reading_full_text, "First sentence. Second sentence")
+            self.assertAlmostEqual(window._reading_fraction, 0.45)
             self.assertNotEqual(
                 window.subtitle_line_one.text(), "Reply complete · Local voice queued"
             )
