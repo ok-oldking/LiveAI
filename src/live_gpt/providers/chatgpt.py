@@ -53,6 +53,32 @@ _USAGE_LIMIT_PATTERN = re.compile(
 )
 
 
+# Activity labels ("Thinking") are drawn by shimmer effects that render the
+# same text again in decorative layers, so plain textContent reads it twice.
+_VISIBLE_LABEL_SCRIPT = """elements => elements.map(element => {
+    const clone = element.cloneNode(true);
+    clone.querySelectorAll('[aria-hidden="true"]').forEach(node => node.remove());
+    return clone.textContent || '';
+})"""
+
+
+def _collapse_repeated_label(label: str) -> str:
+    """Turn "ThinkingThinking" (a label repeated by an animation layer) into "Thinking"."""
+    text = label.strip()
+    for count in (3, 2):
+        if len(text) % count:
+            continue
+        part = text[: len(text) // count]
+        if len(part.strip()) >= 2 and part * count == text:
+            return part.strip()
+    # Repeated with whitespace between copies, e.g. "Thinking Thinking".
+    words = text.split()
+    half = len(words) // 2
+    if half and len(words) % 2 == 0 and words[:half] == words[half:]:
+        return " ".join(words[:half])
+    return text
+
+
 def _label_selectors(element: str, *labels: str) -> str:
     """Match localized controls when ChatGPT exposes no stable test ID."""
     return ", ".join(f'{element}[aria-label="{label}"]' for label in labels)
@@ -659,20 +685,17 @@ class ChatGPTProvider:
         is_generating = cls._locator_is_visible(stop_button)
         live_labels = page.locator(
             '[data-request-input-activity-root] [role="status"]:visible'
-        ).evaluate_all("elements => elements.map(element => element.textContent || '')")
+        ).evaluate_all(_VISIBLE_LABEL_SCRIPT)
         live_status = ""
         activity_labels = page.locator('[data-turn-key]').last.locator(
             '[data-d-component="shimmer-text"]:visible, '
             '[class*="cadencedShimmer-"][class*="cadencedShimmerActive-"]:visible'
-        ).evaluate_all("""elements => elements.map(element => {
-            const clone = element.cloneNode(true);
-            // The animated sweep repeats the label for visual effects only.
-            clone.querySelectorAll('[aria-hidden="true"]').forEach(node => node.remove());
-            return clone.textContent || '';
-        })""")
+        ).evaluate_all(_VISIBLE_LABEL_SCRIPT)
         if isinstance(live_labels, list):
             for label in reversed(live_labels):
-                status = cls._response_activity_status(str(label), True)
+                status = cls._response_activity_status(
+                    _collapse_repeated_label(str(label)), True,
+                )
                 if status != "Responding…":
                     live_status = status
                     break
@@ -681,7 +704,7 @@ class ChatGPTProvider:
         if isinstance(activity_labels, list):
             for label in reversed(activity_labels):
                 if isinstance(label, str) and label.strip():
-                    live_status = label.strip()
+                    live_status = _collapse_repeated_label(label)
                     break
         is_generating = is_generating or bool(live_status)
         waiting_status = live_status or (

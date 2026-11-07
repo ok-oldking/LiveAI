@@ -173,5 +173,16 @@ class ControllerVoiceFallbackTests(unittest.TestCase):
         self.assertFalse(controller._uses_local_recording())
 
 
+class ActivityLabelTests(unittest.TestCase):
+    def test_label_repeated_by_shimmer_layers_is_shown_once(self):
+        from live_gpt.providers.chatgpt import _collapse_repeated_label
+
+        self.assertEqual(_collapse_repeated_label("ThinkingThinking"), "Thinking")
+        self.assertEqual(_collapse_repeated_label("Thinking Thinking"), "Thinking")
+        self.assertEqual(_collapse_repeated_label("正在思考正在思考"), "正在思考")
+        self.assertEqual(_collapse_repeated_label("Searching the web"), "Searching the web")
+        self.assertEqual(_collapse_repeated_label("……"), "……")
+
+
 if __name__ == "__main__":
     unittest.main()
