@@ -87,6 +87,7 @@ class OverlayWindow(QMainWindow):
         self._resize_edges = Qt.Edges()
         self._resize_start_global: QPoint | None = None
         self._resize_start_geometry: QRect | None = None
+        self._resize_start_subtitle_geometry: QRect | None = None
         self._chrome_visible = False
         self._reveal_until_hovered = False
         self._focus_restorer = ForegroundWindowRestorer()
@@ -1676,7 +1677,7 @@ class OverlayWindow(QMainWindow):
         if self._fitting_hover_input or self._fitting_subtitle:
             return
         delta = event.pos() - event.oldPos()
-        if self._subtitle_collapsed_geometry is not None:
+        if self._subtitle_collapsed_geometry is not None and not self._resize_edges:
             self._subtitle_collapsed_geometry.translate(delta)
         if self._input_collapsed_geometry is not None and not self._fitting_hover_input:
             self._input_collapsed_geometry.translate(delta)
@@ -1894,6 +1895,11 @@ class OverlayWindow(QMainWindow):
         self._resize_edges = edges
         self._resize_start_global = global_position
         self._resize_start_geometry = self.geometry()
+        self._resize_start_subtitle_geometry = (
+            QRect(self._subtitle_collapsed_geometry)
+            if self._subtitle_collapsed_geometry is not None
+            else None
+        )
         self._set_chrome_visible(True)
 
     def _update_border_resize(self, global_position: QPoint) -> None:
@@ -1922,7 +1928,20 @@ class OverlayWindow(QMainWindow):
             resized.setBottom(
                 max(start.bottom() + delta.y(), start.top() + self.minimumHeight() - 1)
             )
+        collapsed = self._resize_start_subtitle_geometry
+        if collapsed is not None:
+            # An expanded reply restores its collapsed rectangle on leave, so
+            # carry the new width (and a moved bottom edge) into it.
+            collapsed = QRect(collapsed)
+            collapsed.setLeft(resized.left())
+            collapsed.setRight(resized.right())
+            if self._resize_edges & Qt.Edge.BottomEdge:
+                collapsed.moveBottom(collapsed.bottom() + resized.bottom() - start.bottom())
+            self._subtitle_collapsed_geometry = collapsed
         self.setGeometry(resized)
+        if collapsed is not None:
+            # moveEvent may have shifted it again for a left/top edge move.
+            self._subtitle_collapsed_geometry = collapsed
         self._set_chrome_visible(True)
 
     def _end_border_resize(self) -> None:
@@ -1930,6 +1949,7 @@ class OverlayWindow(QMainWindow):
         self._resize_edges = Qt.Edges()
         self._resize_start_global = None
         self._resize_start_geometry = None
+        self._resize_start_subtitle_geometry = None
         if was_resizing:
             self._track_pointer(QCursor.pos())
 

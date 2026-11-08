@@ -1854,6 +1854,35 @@ class TrayControllerBrowserTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_border_resize_survives_expanded_reply_collapse(self) -> None:
+        window = OverlayWindow()
+        try:
+            window.show()
+            window.setGeometry(100, 100, 1000, 300)
+            QApplication.processEvents()
+            window._subtitle_collapsed_geometry = QRect(100, 120, 1000, 280)
+
+            window._begin_border_resize(Qt.Edge.RightEdge, QPoint(0, 0))
+            window._update_border_resize(QPoint(60, 0))
+            window._end_border_resize()
+
+            self.assertEqual(
+                window._subtitle_collapsed_geometry,
+                QRect(100, 120, 1060, 280),
+            )
+
+            window._begin_border_resize(Qt.Edge.LeftEdge, QPoint(0, 0))
+            window._update_border_resize(QPoint(-40, 0))
+            QApplication.processEvents()
+            window._end_border_resize()
+
+            self.assertEqual(
+                window._subtitle_collapsed_geometry,
+                QRect(60, 120, 1100, 280),
+            )
+        finally:
+            window.close()
+
     def test_chrome_is_transparent_outside_and_visible_while_resizing(self) -> None:
         window = OverlayWindow()
         try:
