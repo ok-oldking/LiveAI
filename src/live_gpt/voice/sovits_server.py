@@ -44,10 +44,13 @@ parser.add_argument("--text-lang", default="auto")
 args = parser.parse_args()
 if not torch.version.cuda or getattr(torch.version, "hip", None) or not torch.cuda.is_available():
     raise RuntimeError("GPT-SoVITS requires an NVIDIA GPU and a CUDA-enabled PyTorch runtime. CPU fallback is disabled.")
-if args.gpu < 0 or args.gpu >= torch.cuda.device_count():
+# The launcher restricts CUDA_VISIBLE_DEVICES to the chosen physical GPU, which
+# then appears in-process as cuda:0. Every thread and ONNX Runtime stays on it.
+local_gpu = 0 if os.environ.get("CUDA_VISIBLE_DEVICES", "").strip() == str(args.gpu) else args.gpu
+if args.gpu < 0 or local_gpu >= torch.cuda.device_count():
     raise RuntimeError(f"NVIDIA GPU {args.gpu} is unavailable; detected {torch.cuda.device_count()} CUDA GPU(s). CPU fallback is disabled.")
-torch.cuda.set_device(args.gpu)
-gpu_name = torch.cuda.get_device_name(args.gpu)
+torch.cuda.set_device(local_gpu)
+gpu_name = torch.cuda.get_device_name(local_gpu)
 print(f"GPT-SoVITS using NVIDIA GPU {args.gpu}: {gpu_name} (CUDA, FP16)", flush=True)
 if bool(args.ckpt) != bool(args.pth):
     parser.error("--ckpt and --pth must both be supplied or both omitted")
@@ -61,7 +64,7 @@ from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config  # noqa: E402
 
 
 config = TTS_Config(args.config)
-config.device = torch.device(f"cuda:{args.gpu}")
+config.device = torch.device(f"cuda:{local_gpu}")
 config.is_half = True
 if args.ckpt:
     config.t2s_weights_path = os.path.abspath(args.ckpt)
@@ -112,7 +115,7 @@ def _warm_pipeline():
 @app.get("/health")
 def health():
     return {"ready": pipeline_ready, "version": pipeline.configs.version,
-            "device": str(pipeline.configs.device), "gpu_name": gpu_name,
+            "device": f"cuda:{args.gpu}", "gpu_name": gpu_name,
             "is_half": pipeline.configs.is_half}
 
 

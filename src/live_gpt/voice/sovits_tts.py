@@ -224,8 +224,15 @@ class SovitsTtsProvider:
                 command.extend(["--ckpt", weights[0], "--pth", weights[1]])
             self._server_output.clear()
             logger.info(f"Starting GPT-SoVITS server in {root}")
-            environment = {**os.environ, "PYTHONIOENCODING": "utf-8", "CUDA_DEVICE_ORDER": "PCI_BUS_ID"}
-            environment.pop("CUDA_VISIBLE_DEVICES", None)
+            # Expose only the chosen GPU (numbered like nvidia-smi). Selecting
+            # cuda:N in-process is not enough: torch's current device is
+            # per-thread, so server worker threads and ONNX Runtime would still
+            # put work on GPU 0 and slow it down.
+            environment = {
+                **os.environ, "PYTHONIOENCODING": "utf-8",
+                "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
+                "CUDA_VISIBLE_DEVICES": str(self.gpu_index),
+            }
             self._process = subprocess.Popen(
                 command,
                 cwd=root,

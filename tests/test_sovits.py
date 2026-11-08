@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import io
 import json
+import os
 import struct
 import sys
 import tempfile
@@ -60,10 +61,18 @@ class SovitsTtsProviderTests(unittest.TestCase):
         self.assertEqual(pipeline.configs.device, "cpu")
         with self.assertRaisesRegex(RuntimeError, "GPU 2 is unavailable"):
             self._load_server(pipeline, gpu=2)
-        server = self._load_server(pipeline, gpu=1, gpu_count=2)
+        with patch.dict(os.environ):
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            server = self._load_server(pipeline, gpu=1, gpu_count=2)
         self.assertEqual(pipeline.configs.device, "cuda:1")
         self.assertTrue(pipeline.configs.is_half)
         self.assertEqual(server.health()["gpu_name"], "NVIDIA Test GPU")
+        # Launched with only the chosen GPU visible, it is cuda:0 in-process.
+        with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "1"}):
+            server = self._load_server(pipeline, gpu=1, gpu_count=1)
+        self.assertEqual(pipeline.configs.device, "cuda:0")
+        server.torch.cuda.set_device.assert_called_once_with(0)
+        self.assertEqual(server.health()["device"], "cuda:1")
 
     @unittest.skipUnless(importlib.util.find_spec("fastapi") and importlib.util.find_spec("uvicorn"), "Requires server dependencies")
     def test_ready_waits_for_complete_voice_warmup(self):
@@ -347,6 +356,8 @@ class SovitsTtsProviderTests(unittest.TestCase):
                 processes[2].terminate.assert_called_once()
                 command = launch.call_args.args[0]
                 self.assertEqual(command[command.index("--gpu") + 1], "1")
+                self.assertEqual(launch.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"], "1")
+                self.assertEqual(launch.call_args.kwargs["env"]["CUDA_DEVICE_ORDER"], "PCI_BUS_ID")
                 self.assertEqual(launch.call_count, 4)
 
     def test_preload_waits_for_voice_and_reloads_changed_reference(self):
