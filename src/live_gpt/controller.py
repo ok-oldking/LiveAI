@@ -23,6 +23,7 @@ from .logger import Logger
 from .providers import DEFAULT_PROVIDER_ID, PROVIDERS, Capability, provider_site
 from .screen_capture import CaptureSource, capture_webp, list_capture_sources
 from .ui.common import (
+    DEFAULT_ADD_SCREENSHOT_HOTKEY,
     DEFAULT_HOLD_MIC_HOTKEY,
     DEFAULT_HOLD_WITHOUT_SCREENSHOT_HOTKEY,
     HOTKEY_CONFIG_KEYS,
@@ -111,12 +112,16 @@ class TrayController:
         self._browser_dictation_start_requested = False
         self._browser_dictation_start_cancelled: threading.Event | None = None
         self._pending_dictation_capture: _PendingDictationCapture | None = None
+        # Screenshots the user attached with the add-screenshot hotkey.
+        self._added_screenshot_tab_id: str | None = None
+        self._added_screenshot_count = 0
         self._hotkey_sequences = self._load_hotkey_sequences()
         bindings = self._bindings_for_sequences(self._hotkey_sequences)
         self.hotkey_monitor = GlobalHotkeyMonitor(
             bindings["hold"],
             parent=self.window,
             hold_without_screenshot=bindings["hold_without_screenshot"],
+            add_screenshot=bindings["add_screenshot"],
             enabled=self._hotkey_enabled_states(),
         )
 
@@ -204,6 +209,7 @@ class TrayController:
         self.hotkey_monitor.hold_without_screenshot_released.connect(
             self.finish_dictation
         )
+        self.hotkey_monitor.add_screenshot_pressed.connect(self.add_screenshot)
 
         self._position_overlay()
         self._restore_window_geometry()
@@ -321,6 +327,7 @@ class TrayController:
             "hold_without_screenshot": (
                 DEFAULT_HOLD_WITHOUT_SCREENSHOT_HOTKEY
             ),
+            "add_screenshot": DEFAULT_ADD_SCREENSHOT_HOTKEY,
         }
         sequences = {
             name: str(self.config[HOTKEY_CONFIG_KEYS[name]])
@@ -351,6 +358,7 @@ class TrayController:
                 hold_without_screenshot=self._hotkey_sequences[
                     "hold_without_screenshot"
                 ],
+                add_screenshot=self._hotkey_sequences["add_screenshot"],
                 language=str(self.config["language"]),
                 recording_backend=str(self.config["recording_backend"]),
                 playing_backend=str(self.config["playing_backend"]),
@@ -386,6 +394,7 @@ class TrayController:
             self.hotkey_monitor.update_bindings(
                 bindings["hold"],
                 hold_without_screenshot=bindings["hold_without_screenshot"],
+                add_screenshot=bindings["add_screenshot"],
                 enabled=self._hotkey_enabled_states(),
             )
             self.window.set_status(tr("Settings updated"))
@@ -734,6 +743,9 @@ class TrayController:
         self._stop_playback_for_recording()
         self.window.prepare_for_dictation()
         self._dictation_send_on_finish = send_on_finish
+        if include_screenshot and self._has_added_screenshots():
+            # The user already chose the screenshots for this prompt.
+            include_screenshot = False
         self._dictation_include_screenshot = include_screenshot
         self._dictation_input_held = True
         self._dictation_pressed_since = (
@@ -787,6 +799,69 @@ class TrayController:
             )
             self._browser_dictation_start_requested = True
             self._browser_dictation_start_cancelled = self.browser_monitor.request_start_dictation(tab_id)
+
+    def _has_added_screenshots(self, tab_id: str | None = None) -> bool:
+        tab_id = tab_id if tab_id is not None else self.selected_chat_tab_id
+        return bool(
+            tab_id is not None
+            and getattr(self, "_added_screenshot_count", 0) > 0
+            and getattr(self, "_added_screenshot_tab_id", None) == tab_id
+        )
+
+    def _forget_added_screenshots(self) -> None:
+        self._added_screenshot_tab_id = None
+        self._added_screenshot_count = 0
+
+    def add_screenshot(self) -> None:
+        """Attach another screenshot to the chat composer without sending."""
+        if getattr(self, "_shutting_down", False):
+            return
+        tab_id = self.selected_chat_tab_id
+        if tab_id is None:
+            self.window.show_for_auto_hide()
+            self.window.set_status(tr("Select a chat window first"), error=True)
+            self.window.schedule_auto_hide(5_000)
+            return
+        if Capability.IMAGE_UPLOAD not in self._selected_capabilities():
+            self.window.show_for_auto_hide()
+            self.window.set_status(
+                tr("This chat site does not accept screenshots"), error=True,
+            )
+            self.window.schedule_auto_hide(5_000)
+            return
+        selected = self.window.capture_source_combo.currentData()
+        if not isinstance(selected, CaptureSource):
+            self.window.show_for_auto_hide()
+            self.window.set_status(tr("Select a screenshot source first"), error=True)
+            self.window.schedule_auto_hide(5_000)
+            return
+        try:
+            screenshot = capture_webp(
+                selected, include_cursor=bool(self.config["capture_cursor"])
+            )
+        except Exception as error:
+            logger.error("Unable to capture screenshot to add", error)
+            self.window.show_for_auto_hide()
+            self.window.set_status(
+                tr("Could not capture screenshot: {error}", error=error),
+                error=True,
+            )
+            self.window.schedule_auto_hide(5_000)
+            return
+        if not self._has_added_screenshots(tab_id):
+            self._added_screenshot_tab_id = tab_id
+            self._added_screenshot_count = 0
+        self._added_screenshot_count += 1
+        logger.info(
+            f"Adding screenshot source={selected.key!r} tab_id={tab_id!r} "
+            f"count={self._added_screenshot_count}"
+        )
+        self.browser_monitor.request_add_attachment(tab_id, screenshot)
+        self.window.show_for_auto_hide()
+        self.window.set_status(
+            tr("Screenshot added ({count} attached)", count=self._added_screenshot_count)
+        )
+        self.window.schedule_auto_hide()
 
     def _stop_reply_playback(self) -> None:
         self._local_voice_interrupted = True
@@ -1211,6 +1286,11 @@ class TrayController:
         else:
             screenshot = None
 
+        added_screenshots = self._has_added_screenshots(tab_id)
+        if added_screenshots and pending_capture is None:
+            # Send the screenshots the user added instead of a new one.
+            capture_source = None
+
         if capture_source is not None and pending_capture is None:
             self.window.set_status(tr("Capturing screenshot…"))
             try:
@@ -1242,8 +1322,10 @@ class TrayController:
         self._local_voice_seen_sentences = Counter()
         self._local_voice_tentative_key = ""
         preserve_attachments = bool(
-            pending_capture is not None and pending_capture.preuploaded
+            added_screenshots
+            or (pending_capture is not None and pending_capture.preuploaded)
         )
+        self._forget_added_screenshots()
         if preserve_attachments:
             self.browser_monitor.request_send(
                 tab_id,
@@ -1274,6 +1356,9 @@ class TrayController:
             )
             return
 
+        if self._has_added_screenshots(tab_id):
+            self.browser_monitor.request_clear_attachments(tab_id)
+        self._forget_added_screenshots()
         logger.info(f"Clearing chat input tab_id={tab_id!r}")
         self.window.set_status(tr("Clearing the input…"))
         self.browser_monitor.request_clear(tab_id)

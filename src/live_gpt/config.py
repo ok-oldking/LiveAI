@@ -20,6 +20,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "language": "",
     "hotkey_hold": "Right Alt",
     "hotkey_hold_without_screenshot": "Right Ctrl",
+    "hotkey_add_screenshot": "Right Shift",
     "auto_hide": False,
     "capture_source": "",
     "capture_cursor": True,

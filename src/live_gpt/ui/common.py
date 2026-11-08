@@ -80,12 +80,16 @@ DEFAULT_HOLD_WITHOUT_SCREENSHOT_HOTKEY = str(
 )
 
 
+DEFAULT_ADD_SCREENSHOT_HOTKEY = str(DEFAULT_CONFIG["hotkey_add_screenshot"])
+
+
 MIN_ENGLISH_VOICE_SEND_CHARACTERS = 2
 
 
 HOTKEY_CONFIG_KEYS = {
     "hold": "hotkey_hold",
     "hold_without_screenshot": "hotkey_hold_without_screenshot",
+    "add_screenshot": "hotkey_add_screenshot",
 }
 
 

@@ -149,6 +149,7 @@ After activating the virtual environment, you can also launch the app with
 | --- | --- |
 | Hold **Right Alt** | Dictate and send with the selected screenshot source |
 | Hold **Right Ctrl** | Dictate and send without a screenshot |
+| Tap **Right Shift** | Add a screenshot to the chat without sending; tap again for more. The next send uses these instead of taking a new one |
 | Hold the overlay **microphone** | Dictate into the editor for review; send manually |
 | **Enter** | Send the current prompt |
 | **Shift+Enter** | Insert a newline |

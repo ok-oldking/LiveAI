@@ -271,6 +271,7 @@ class GlobalHotkeyMonitor(QObject):
     hold_without_screenshot_released = Signal()
     send_pressed = Signal()
     send_without_screenshot_pressed = Signal()
+    add_screenshot_pressed = Signal()
     administrator_required = Signal(str)
 
     def __init__(
@@ -281,6 +282,7 @@ class GlobalHotkeyMonitor(QObject):
         parent: QObject | None = None,
         *,
         hold_without_screenshot: HotkeyBinding | None = None,
+        add_screenshot: HotkeyBinding | None = None,
         enabled: dict[str, bool] | None = None,
         key_state: Callable[[int], int] | None = None,
         clock: Callable[[], float] | None = None,
@@ -314,11 +316,13 @@ class GlobalHotkeyMonitor(QObject):
         self._privilege_timer = QTimer(self)
         self._privilege_timer.setInterval(1_000)
         self._privilege_timer.timeout.connect(self.check_foreground_privileges)
+        self._tap_spoiled = False
         self.update_bindings(
             hold,
             send,
             send_without_screenshot,
             hold_without_screenshot=hold_without_screenshot,
+            add_screenshot=add_screenshot,
             enabled=enabled,
         )
 
@@ -329,6 +333,7 @@ class GlobalHotkeyMonitor(QObject):
         send_without_screenshot: HotkeyBinding | None = None,
         *,
         hold_without_screenshot: HotkeyBinding | None = None,
+        add_screenshot: HotkeyBinding | None = None,
         enabled: dict[str, bool] | None = None,
     ) -> None:
         self._enabled = dict(enabled) if enabled is not None else None
@@ -342,8 +347,10 @@ class GlobalHotkeyMonitor(QObject):
             ),
             "send": send,
             "send_without_screenshot": send_without_screenshot,
+            "add_screenshot": add_screenshot,
         }
         self._pressed = {name: False for name in self._bindings}
+        self._tap_spoiled = False
         self._hold_started_at = {
             "hold": None,
             "hold_without_screenshot": None,
@@ -399,6 +406,7 @@ class GlobalHotkeyMonitor(QObject):
         if self._hold_emitted["hold_without_screenshot"]:
             self.hold_without_screenshot_released.emit()
         self._pressed = {name: False for name in self._bindings}
+        self._tap_spoiled = False
         self._hold_started_at = {
             "hold": None,
             "hold_without_screenshot": None,
@@ -452,4 +460,46 @@ class GlobalHotkeyMonitor(QObject):
         ):
             self.send_without_screenshot_pressed.emit()
 
+        # Add-screenshot fires on release, and only for a lone tap, so typing
+        # capitals with a Shift binding never takes screenshots.
+        if current["add_screenshot"]:
+            if not self._pressed["add_screenshot"]:
+                self._tap_spoiled = False
+            if not self._tap_spoiled and self._other_key_down(
+                self._bindings["add_screenshot"]
+            ):
+                self._tap_spoiled = True
+        elif self._pressed["add_screenshot"]:
+            binding = self._bindings["add_screenshot"]
+            if not self._tap_spoiled and not (
+                binding is not None and self._other_key_down(binding)
+            ):
+                self.add_screenshot_pressed.emit()
+            self._tap_spoiled = False
+
         self._pressed = current
+
+    def _other_key_down(self, binding: HotkeyBinding) -> bool:
+        own = {binding.virtual_key, *binding.sided_modifiers}
+        for key in tuple(own):
+            if key in (0xA0, 0xA1):
+                own.add(VK_SHIFT)
+            elif key in (0xA2, 0xA3):
+                own.add(VK_CONTROL)
+            elif key in (0xA4, 0xA5):
+                own.add(VK_MENU)
+                own.add(0xA2)  # AltGr synthesizes Left Ctrl.
+                own.add(VK_CONTROL)
+        if binding.control:
+            own.update((VK_CONTROL, 0xA2, 0xA3))
+        if binding.shift:
+            own.update((VK_SHIFT, 0xA0, 0xA1))
+        if binding.alt:
+            own.update((VK_MENU, 0xA4, 0xA5))
+        if binding.meta:
+            own.update((VK_LWIN, VK_RWIN))
+        return any(
+            self._key_state(key) & 0x8000
+            for key in range(0x01, 0xFF)
+            if key not in own and key not in (0x07, 0xFF)
+        )

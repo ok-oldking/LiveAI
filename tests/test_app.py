@@ -1520,10 +1520,15 @@ class SettingsDialogTests(unittest.TestCase):
                 self.assertFalse(hasattr(dialog, "send_edit"))
                 dialog.hold_microphone_edit.clear_button.click()
                 dialog.hold_without_screenshot_edit.clear_button.click()
+                dialog.add_screenshot_edit.clear_button.click()
                 saved_config = Config(path)
                 self.assertEqual(saved_config["hotkey_hold"], "")
                 self.assertEqual(saved_config["hotkey_hold_without_screenshot"], "")
-                self.assertEqual(dialog.sequences(), {"hold": "", "hold_without_screenshot": ""})
+                self.assertEqual(saved_config["hotkey_add_screenshot"], "")
+                self.assertEqual(
+                    dialog.sequences(),
+                    {"hold": "", "hold_without_screenshot": "", "add_screenshot": ""},
+                )
                 controller = TrayController.__new__(TrayController)
                 controller.config = saved_config
                 self.assertEqual(controller._load_hotkey_sequences(), dialog.sequences())
@@ -1560,6 +1565,43 @@ class SettingsDialogTests(unittest.TestCase):
 
 
 class TrayControllerBrowserTests(unittest.TestCase):
+    def test_added_screenshots_replace_the_automatic_send_screenshot(self) -> None:
+        controller = TrayController.__new__(TrayController)
+        controller.config = {"capture_cursor": True}
+        controller.window = Mock()
+        controller.browser_monitor = Mock()
+        controller.selected_chat_tab_id = "tab"
+        controller._tab_providers = {"tab": "chatgpt"}
+        source = CaptureSource("screen:1", "Screen", "screen", 0, 0, 10, 10)
+        controller.window.capture_source_combo.currentData.return_value = source
+        with patch("live_gpt.controller.capture_webp", return_value=b"shot") as capture:
+            controller.add_screenshot()
+            controller.add_screenshot()
+            self.assertEqual(
+                controller.browser_monitor.request_add_attachment.call_count, 2
+            )
+            controller.browser_monitor.request_add_attachment.assert_called_with("tab", b"shot")
+            capture.reset_mock()
+            controller._handle_send_requested("Compare these", source)
+            capture.assert_not_called()
+        controller.browser_monitor.request_send.assert_called_once_with(
+            "tab", "Compare these", None, preserve_attachments=True,
+        )
+        self.assertFalse(controller._has_added_screenshots())
+
+    def test_record_with_screenshot_skips_capture_after_added_screenshots(self) -> None:
+        controller = TrayController.__new__(TrayController)
+        controller.selected_chat_tab_id = "tab"
+        controller._added_screenshot_tab_id = "tab"
+        controller._added_screenshot_count = 1
+        controller.window = Mock()
+        controller.browser_monitor = Mock()
+        controller._dictation_state = "listening"  # Skip starting a session.
+        with patch.object(controller, "_stop_playback_for_recording"):
+            controller.start_dictation(send_on_finish=True, include_screenshot=True)
+        self.assertFalse(controller._dictation_include_screenshot)
+        controller.browser_monitor.request_clear_attachments.assert_not_called()
+
     def test_tab_selection_updates_background_focus_and_disconnect_clears_it(self):
         controller = TrayController.__new__(TrayController)
         controller.browser_monitor = Mock()

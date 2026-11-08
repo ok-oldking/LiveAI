@@ -271,6 +271,17 @@ class BrowserMonitor(QThread):
         )
         self._wake_event.set()
 
+    def request_add_attachment(
+        self,
+        tab_id: str,
+        screenshot_webp: bytes,
+    ) -> None:
+        """Paste another screenshot next to the ones already attached."""
+        self._attachment_requests.put(
+            _AttachmentRequest("add", tab_id, screenshot_webp)
+        )
+        self._wake_event.set()
+
     def request_clear_attachments(self, tab_id: str) -> None:
         self._attachment_requests.put(_AttachmentRequest("clear", tab_id))
         self._wake_event.set()
@@ -938,6 +949,18 @@ class BrowserMonitor(QThread):
                 logger.info(f"{provider.display_name} does not accept screenshots; skipping")
                 continue
             try:
+                if request.action == "add":
+                    if request.screenshot_webp is None:
+                        raise RuntimeError("The screenshot data is empty")
+                    # Retrying would clear the screenshots added earlier.
+                    provider.paste_screenshot(page, request.screenshot_webp)
+                    provider.upload_screenshot(
+                        page, request.screenshot_webp, preserve=True, attempts=1,
+                    )
+                    logger.info(
+                        f"Added screenshot to chat tab_id={request.tab_id!r}"
+                    )
+                    continue
                 provider.clear_attachments(page)
                 if request.action == "replace":
                     if request.screenshot_webp is None:

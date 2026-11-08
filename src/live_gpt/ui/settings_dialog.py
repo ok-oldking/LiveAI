@@ -322,6 +322,7 @@ class HotkeyConfigDialog(QDialog):
         parent: QWidget | None = None,
         *,
         hold_without_screenshot: QKeySequence | str | None = None,
+        add_screenshot: QKeySequence | str | None = None,
         language: str = "",
         recording_backend: str = "web",
         playing_backend: str = "web",
@@ -372,6 +373,9 @@ class HotkeyConfigDialog(QDialog):
         self.hold_microphone_edit = self._sequence_edit(hold_microphone)
         self.hold_without_screenshot_edit = self._sequence_edit(
             hold_without_screenshot if hold_without_screenshot is not None else "Right Ctrl"
+        )
+        self.add_screenshot_edit = self._sequence_edit(
+            add_screenshot if add_screenshot is not None else "Right Shift"
         )
 
         self.settings_shell = QFrame()
@@ -578,6 +582,7 @@ class HotkeyConfigDialog(QDialog):
             ("hold", tr("Record and Send with Screenshot"), self.hold_microphone_edit),
             ("hold_without_screenshot", tr("Record and Send without Screenshot"),
              self.hold_without_screenshot_edit),
+            ("add_screenshot", tr("Add Screenshot to Chat"), self.add_screenshot_edit),
         ):
             form.addRow(label, editor)
         hotkey_card_layout.addLayout(form)
@@ -1285,6 +1290,7 @@ class HotkeyConfigDialog(QDialog):
         for editor in (
             self.hold_microphone_edit,
             self.hold_without_screenshot_edit,
+            self.add_screenshot_edit,
         ):
             editor.keySequenceChanged.connect(
                 lambda _sequence: self._save_hotkeys()
@@ -2044,6 +2050,7 @@ class HotkeyConfigDialog(QDialog):
             "hold_without_screenshot": (
                 self.hold_without_screenshot_edit.keySequence()
             ),
+            "add_screenshot": self.add_screenshot_edit.keySequence(),
         }
 
     def _language_changed(self) -> None:

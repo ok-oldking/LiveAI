@@ -27,6 +27,36 @@ class GlobalHotkeyMonitorTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.application = QApplication.instance() or QApplication([])
 
+    def test_add_screenshot_fires_on_a_lone_tap_but_not_while_typing(self) -> None:
+        pressed: set[int] = set()
+        monitor = GlobalHotkeyMonitor(
+            HotkeyBinding.from_sequence("Right Alt"),
+            hold_without_screenshot=HotkeyBinding.from_sequence("Right Ctrl"),
+            add_screenshot=HotkeyBinding.from_sequence("Right Shift"),
+            key_state=lambda key: 0x8000 if key in pressed else 0,
+        )
+        events = []
+        monitor.add_screenshot_pressed.connect(lambda: events.append("add"))
+
+        def poll(*keys: int) -> None:
+            pressed.clear()
+            pressed.update(keys)
+            monitor.poll_now()
+
+        right_shift = SIDED_MODIFIERS["Right Shift"]
+        poll(right_shift, VK_SHIFT)
+        self.assertEqual(events, [])
+        poll()
+        self.assertEqual(events, ["add"])
+        # Typing a capital letter with Right Shift must not add a screenshot.
+        poll(right_shift, VK_SHIFT)
+        poll(right_shift, VK_SHIFT, ord("A"))
+        poll(right_shift, VK_SHIFT)
+        poll()
+        poll(SIDED_MODIFIERS["Left Shift"], VK_SHIFT)
+        poll()
+        self.assertEqual(events, ["add"])
+
     def setUp(self) -> None:
         self.pressed: set[int] = set()
         self.now = 10.0
