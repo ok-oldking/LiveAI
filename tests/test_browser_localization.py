@@ -852,6 +852,21 @@ class BrowserLocalizationTests(unittest.TestCase):
         snapshot = ChatGPTProvider.response_snapshot(self.page, "old")
         self.assertEqual(snapshot.text, "The real answer.")
 
+    def test_thinking_summary_after_streamed_reply_does_not_replace_it(self):
+        self.page.set_content('''<div data-turn-key="new">
+          <div data-chatgpt-search-unit-key="new:assistant">
+            <div data-markdown-animated data-markdown-text-style="assistant-message">
+              <div data-markdown-copy="contents"><p>你截图里已经接了2个神庙任务。</p></div>
+            </div>
+          </div>
+          <div><hr><div class="detail-kV0yGe">
+            <div data-markdown-animated data-markdown-text-style="assistant-message"
+                 data-markdown-text-tone="tertiary"><p>Refined quest details</p></div>
+          </div></div>
+        </div>''')
+        snapshot = ChatGPTProvider.response_snapshot(self.page, "old")
+        self.assertEqual(snapshot.text, "你截图里已经接了2个神庙任务。")
+
     def test_search_activity_is_not_extracted_as_reply_text(self):
         for reply in ('', '<div class="markdown">Actual reply</div>'):
             with self.subTest(reply=reply):
@@ -955,6 +970,26 @@ class BrowserLocalizationTests(unittest.TestCase):
         self.assertNotIn("Copy", text)
         self.assertIn("/startattack\n/cast 神圣打击", text)
         self.assertEqual(self.page.locator('button[aria-label="Copy"]').count(), 1)
+
+    def test_copyable_command_row_becomes_code_card(self):
+        from live_gpt.response_content import reply_code_blocks
+
+        self.page.set_content(
+            '<div id="reply" data-markdown-copy="contents"><p>Go here.</p>'
+            '<div data-d-component="row" data-d-direction="row">'
+            '<div data-d-component="box"><p data-d-component="text"><span data-d-inline="">'
+            '<code data-d-component="code"><span>/way Swamp of Sorrows 69.9 53.5 神庙入口</span></code>'
+            '</span></p></div>'
+            '<button type="button" data-d-component="button"><span><svg></svg><span> 复制</span></span></button>'
+            '</div></div>'
+        )
+        text, html, speech = ChatGPTProvider._reply_content(self.page.locator('#reply'))
+        _formatted, blocks = reply_code_blocks(html, "Plain text")
+        self.assertEqual(blocks, [("Plain text", "/way Swamp of Sorrows 69.9 53.5 神庙入口")])
+        self.assertIn("/way Swamp of Sorrows", text)
+        self.assertNotIn("复制", text)
+        self.assertEqual(speech, "Go here.")
+        self.assertEqual(self.page.locator('button[data-d-component="button"]').count(), 1)
 
     def test_speech_text_omits_code_blocks(self):
         reply = (Path(__file__).parent / "fixtures" / "chatgpt_code_reply.html").read_text(encoding="utf-8")

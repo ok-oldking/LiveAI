@@ -5,6 +5,8 @@ from html import escape
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
+from .ui.theme import PALETTE
+
 
 def _web_url(url: str) -> bool:
     try:
@@ -104,7 +106,7 @@ class _CodeBlocks(HTMLParser):
                 self.parts.append(
                     '<table width="100%" border="0" cellspacing="0" cellpadding="0" '
                     'style="margin-top: 24px; margin-bottom: 18px;">'
-                    '<tr><td style="padding: 16px 20px 8px 20px;"><b><a style="color: #f5f7ff; text-decoration: none;" name="live-gpt-code-' + str(index) + '">'
+                    '<tr><td style="padding: 16px 20px 8px 20px;"><b><a style="color: ' + PALETTE["text"] + '; text-decoration: none;" name="live-gpt-code-' + str(index) + '">'
                     + escape(self._language) + '</a></b></td><td width="60" style="padding: 16px 20px 8px 0;">&nbsp;</td></tr>'
                     '<tr><td colspan="2" style="padding: 8px 20px 18px 20px;"><pre style="margin: 0; white-space: pre;">'
                     + escape(code) + '</pre></td></tr></table><br>'
@@ -241,6 +243,20 @@ element => {
         const language = label && label.textContent.trim() ||
             (code && code.className.match(/(?:^|\s)language-([^\s]+)/) || [])[1];
         if (language) block.setAttribute('data-live-gpt-language', language);
+    }
+    // Copyable snippets (e.g. a game command) render as a row of inline code
+    // beside a "Copy" button. Turn them into code blocks so the reply view
+    // gives them a copy button too.
+    for (const row of clone.querySelectorAll('[data-d-component="row"]')) {
+        if (!clone.contains(row) || row.querySelector('pre, [data-markdown-copy="code-block"]')
+            || !Array.from(row.children).some(child => child.tagName === 'BUTTON')) continue;
+        const codes = row.querySelectorAll('code');
+        if (!codes.length) continue;
+        const pre = row.ownerDocument.createElement('pre');
+        const code = row.ownerDocument.createElement('code');
+        code.textContent = Array.from(codes, node => node.textContent).join('\n');
+        pre.appendChild(code);
+        row.replaceWith(pre);
     }
     clone.querySelectorAll([
         '[data-markdown-copy="exclude"]',

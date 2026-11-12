@@ -741,9 +741,14 @@ class ChatGPTProvider:
                 status=waiting_status,
             )
 
+        # Thinking summaries ("Refined quest details") use the same markdown
+        # style in a muted tone and can follow the streamed reply, so `.last`
+        # would otherwise pick them over the half-written answer.
         markdown = turn.locator(
             ", ".join(selector + ':not([class~="group/activity-header"] *)'
                       + ':not([class~="group/agent-activity"] *)'
+                      + ':not([data-markdown-text-tone="tertiary"])'
+                      + ':not([data-markdown-text-tone="tertiary"] *)'
                       for selector in (
                 '.markdown', '[data-message-author-role="assistant"] .prose',
                 '[data-markdown-text-style="assistant-message"]',
