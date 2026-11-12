@@ -27,6 +27,15 @@ from ..localization import localization, tr
 from ..reply_images import ImagePreviewDialog, ReplyImageLoader, ReplyImageMarkup
 from ..response_content import reply_code_blocks
 from .common import CHECK_ICON_PATH, COPY_ICON_PATH, EXIT_ICON_PATH, SEND_ICON_PATH
+from .theme import PALETTE, themed
+
+
+_COPY_BUTTON_STYLE = themed("""
+    QPushButton { padding: 0; min-width: 0; min-height: 0;
+        color: $text; background: transparent;
+        border: none; border-radius: 10px; }
+    QPushButton:hover { background: $button_flat_hover; }
+""")
 
 
 class LinkTextEdit(QPlainTextEdit):
@@ -219,7 +228,7 @@ class TranscriptEditor(LinkTextEdit):
 
     def set_hint(self, message: str, *, error: bool = False) -> None:
         self.setPlaceholderText(message)
-        color = QColor("#ff667a" if error else "#aeb9d5")
+        color = QColor(PALETTE["error_hint" if error else "text_muted"])
         palette = self.palette()
         for group in (
             QPalette.ColorGroup.Active,
@@ -279,15 +288,15 @@ class ReplyDisplay(QTextBrowser):
         self.setOpenLinks(False)
         self.setOpenExternalLinks(False)
         self.anchorClicked.connect(self._open_link)
-        self.document().setDefaultStyleSheet("""
+        self.document().setDefaultStyleSheet(themed("""
             p { margin-top: 0; margin-bottom: 12px; }
-            a { color: #66dcff; text-decoration: underline; }
-            th { background-color: #243352; font-weight: bold; }
+            a { color: $link; text-decoration: underline; }
+            th { background-color: $table_header; font-weight: bold; }
             td, th { padding: 6px; }
             pre { white-space: pre-wrap; }
             code { font-family: Consolas, monospace; }
-            blockquote { margin-left: 16px; color: #c1cbe0; }
-        """)
+            blockquote { margin-left: 16px; color: $text_quote; }
+        """))
         self.viewport().setObjectName("replyViewport")
         self.viewport().setStyleSheet("QWidget#replyViewport { background: transparent; }")
         self.verticalScrollBar().valueChanged.connect(self._position_copy_buttons)
@@ -340,7 +349,7 @@ class ReplyDisplay(QTextBrowser):
             card = QFrame(self)
             card.setObjectName("replyCodeCard")
             card.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-            card.setStyleSheet("background-color: #17223b; border: none; border-radius: 18px;")
+            card.setStyleSheet(themed("background-color: $code_card; border: none; border-radius: 18px;"))
             card.lower()
             self._code_cards.append(card)
             button = QPushButton(self.viewport())
@@ -349,12 +358,7 @@ class ReplyDisplay(QTextBrowser):
             button.setIconSize(QSize(22, 22))
             button.setAccessibleName(tr("Copy code"))
             button.setToolTip(tr("Copy code"))
-            button.setStyleSheet("""
-                QPushButton { padding: 0; min-width: 0; min-height: 0;
-                    color: #f5f7ff; background: transparent;
-                    border: none; border-radius: 10px; }
-                QPushButton:hover { background: #344768; }
-            """)
+            button.setStyleSheet(_COPY_BUTTON_STYLE)
             button.clicked.connect(lambda _checked=False, index=index: self._copy_code(index))
             timer = QTimer(button)
             timer.setSingleShot(True)

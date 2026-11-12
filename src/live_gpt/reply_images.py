@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from .localization import tr
+from .ui.theme import PALETTE, themed
 
 
 class ReplyImageMarkup(HTMLParser):
@@ -119,9 +120,9 @@ class ReplyImageLoader(QObject):
 
     def placeholder(self, source: str, size: QSize) -> QImage:
         image = QImage(size, QImage.Format.Format_ARGB32)
-        image.fill(QColor("#17223b"))
+        image.fill(QColor(PALETTE["code_card"]))
         painter = QPainter(image)
-        painter.setPen(QColor("#c1cbe0"))
+        painter.setPen(QColor(PALETTE["text_quote"]))
         painter.drawText(image.rect(), Qt.AlignmentFlag.AlignCenter,
                          tr("Image unavailable") if source in self.failed else tr("Loading image…"))
         painter.end()
@@ -139,7 +140,7 @@ class ImageView(QGraphicsView):
         scene.addItem(self.image_item)
         self.image_item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
         self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setBackgroundBrush(QColor("#0c1224"))
+        self.setBackgroundBrush(QColor(PALETTE["dialog"]))
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
@@ -245,10 +246,10 @@ class ImagePreviewDialog(QDialog):
         self.image: QImage | None = loader.request(source)
         self._drag_offset = None
         self.setMinimumSize(360, 240)
-        self.setStyleSheet("QDialog { background: #0c1224; } QLabel { color: #f5f7ff; }"
-                           "QPushButton { color: #f5f7ff; background: #243352; border: none; border-radius: 10px; padding: 10px; }"
-                           "QPushButton:hover { background: #344768; }"
-                           "QPushButton#imageWindowButton { min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; padding: 0; }")
+        self.setStyleSheet(themed("QDialog { background: $dialog; } QLabel { color: $text; }"
+                           "QPushButton { color: $text; background: $table_header; border: none; border-radius: 10px; padding: 10px; }"
+                           "QPushButton:hover { background: $button_flat_hover; }"
+                           "QPushButton#imageWindowButton { min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; padding: 0; }"))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 20)
         self.title_bar = QWidget(self)

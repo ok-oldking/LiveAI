@@ -63,6 +63,7 @@ from .common import (
     SHORTCUTS_ICON_PATH,
     SPEAKER_ICON_PATH,
 )
+from .theme import SPINBOX_STYLE, themed
 
 
 logger = Logger.get_logger(__name__)
@@ -81,32 +82,32 @@ class _PetDownloadThread(QThread):
             self.completed.emit(False, str(error))
 
 
-SETTINGS_STYLE = """
+SETTINGS_STYLE = themed("""
             QDialog#settingsDialog {
                 background: transparent;
             }
             QFrame#settingsShell {
-                color: #f5f7ff;
-                background-color: #0c1430;
-                border: 1px solid rgba(130, 165, 230, 75);
+                color: $text;
+                background-color: $settings_shell;
+                border: 1px solid $border;
                 border-radius: 14px;
             }
             QFrame#settingsTitleBar {
-                background-color: #10182e;
+                background-color: $settings_title;
                 border: none;
-                border-bottom: 1px solid rgba(130, 165, 230, 45);
+                border-bottom: 1px solid $divider;
                 border-top-left-radius: 14px;
                 border-top-right-radius: 14px;
             }
             QLabel#settingsAppTitle {
-                color: #f5f7ff;
+                color: $text;
                 background: transparent;
                 font-size: 15px;
                 font-weight: 700;
             }
             QLabel#settingsTitleSeparator,
             QLabel#settingsWindowTitle {
-                color: #8795b8;
+                color: $text_subtle;
                 background: transparent;
                 font-size: 14px;
             }
@@ -116,7 +117,7 @@ SETTINGS_STYLE = """
                 border-radius: 8px;
             }
             QPushButton#settingsCloseButton:hover {
-                background-color: rgba(239, 68, 88, 190);
+                background-color: $danger_hover;
             }
             QWidget#settingsBody,
             QWidget#settingsContent,
@@ -128,13 +129,13 @@ SETTINGS_STYLE = """
                 border: none;
             }
             QFrame#settingsNavigation {
-                background-color: rgba(8, 14, 34, 120);
+                background-color: $settings_nav;
                 border: none;
-                border-right: 1px solid rgba(130, 165, 230, 45);
+                border-right: 1px solid $divider;
                 border-bottom-left-radius: 14px;
             }
             QLabel#settingsNavigationLabel {
-                color: #7180a4;
+                color: $text_faint;
                 background: transparent;
                 border: none;
                 padding-left: 10px;
@@ -144,7 +145,7 @@ SETTINGS_STYLE = """
             QPushButton#settingsNavigationButton {
                 min-height: 42px;
                 padding: 0 12px;
-                color: #cbd4ed;
+                color: $text_nav;
                 background: transparent;
                 border: 1px solid transparent;
                 border-radius: 9px;
@@ -152,54 +153,54 @@ SETTINGS_STYLE = """
                 font-size: 14px;
             }
             QPushButton#settingsNavigationButton:hover {
-                color: #f5f7ff;
-                background-color: rgba(70, 88, 140, 80);
+                color: $text;
+                background-color: $nav_hover;
             }
             QPushButton#settingsNavigationButton:checked {
-                color: #f5f7ff;
-                background-color: rgba(38, 112, 145, 115);
-                border-color: rgba(76, 201, 240, 80);
+                color: $text;
+                background-color: $nav_checked;
+                border-color: $nav_checked_border;
             }
             QLabel#settingsPageTitle {
-                color: #f5f7ff;
+                color: $text;
                 background: transparent;
                 font-size: 24px;
                 font-weight: 700;
             }
             QLabel#settingsPageDescription {
-                color: #aeb9d5;
+                color: $text_muted;
                 background: transparent;
                 font-size: 14px;
             }
             QFrame#settingsCard {
-                color: #f5f7ff;
-                background-color: #121c3a;
-                border: 1px solid rgba(130, 165, 230, 70);
+                color: $text;
+                background-color: $settings_card;
+                border: 1px solid $border_card;
                 border-radius: 12px;
             }
             QFrame#settingsCard QLabel {
-                color: #e9edff;
+                color: $text_card;
                 background: transparent;
                 border: none;
             }
             QFrame#settingsCard QCheckBox {
-                color: #f5f7ff;
+                color: $text;
                 background: transparent;
                 border: none;
                 spacing: 10px;
                 font-size: 14px;
             }
             QLabel#settingsCardTitle {
-                color: #f5f7ff;
+                color: $text;
                 font-size: 16px;
                 font-weight: 700;
             }
             QLabel#settingsNote {
-                color: #8795b8;
+                color: $text_subtle;
                 font-size: 12px;
             }
             QLabel#voiceFieldGroupTitle {
-                color: #dce7ff;
+                color: $text_group;
                 font-size: 13px;
                 font-weight: 600;
                 padding-top: 7px;
@@ -217,32 +218,32 @@ SETTINGS_STYLE = """
                 min-height: 34px;
                 min-width: 230px;
                 padding: 0 10px;
-                color: #f5f7ff;
-                background-color: rgba(5, 10, 28, 165);
-                border: 1px solid rgba(130, 165, 230, 85);
+                color: $text;
+                background-color: $field_strong;
+                border: 1px solid $border_strong;
                 border-radius: 8px;
-                selection-background-color: rgba(76, 201, 240, 130);
+                selection-background-color: $selection;
             }
             QLineEdit#hotkeyEdit:focus,
             QKeySequenceEdit QLineEdit:focus {
-                border-color: rgba(76, 201, 240, 190);
+                border-color: $focus;
             }
             QComboBox#languageCombo QAbstractItemView,
             QComboBox#voiceCombo QAbstractItemView {
-                color: #f5f7ff;
-                background-color: #182342;
-                border: 1px solid rgba(130, 165, 230, 85);
-                selection-background-color: rgb(38, 112, 145);
+                color: $text;
+                background-color: $popup_settings;
+                border: 1px solid $border_strong;
+                selection-background-color: $selection_solid;
             }
             QScrollArea#settingsVoiceScroll QScrollBar:vertical {
                 width: 10px;
                 margin: 0;
-                background: rgba(5, 10, 28, 130);
+                background: $scroll_track;
                 border: none;
             }
             QScrollArea#settingsVoiceScroll QScrollBar::handle:vertical {
                 min-height: 36px;
-                background: rgba(76, 201, 240, 120);
+                background: $scroll_handle;
                 border-radius: 5px;
             }
             QScrollArea#settingsVoiceScroll QScrollBar::add-line:vertical,
@@ -252,61 +253,61 @@ SETTINGS_STYLE = """
             QPushButton#voiceActionButton {
                 min-height: 32px;
                 padding: 0 12px;
-                color: #f5f7ff;
-                background-color: rgba(38, 112, 145, 125);
-                border: 1px solid rgba(76, 201, 240, 95);
+                color: $text;
+                background-color: $action;
+                border: 1px solid $action_border;
                 border-radius: 8px;
             }
             QPushButton#voiceActionButton:hover {
-                background-color: rgba(44, 140, 175, 170);
+                background-color: $action_hover;
             }
             QPushButton#voiceActionButton:disabled {
-                color: #6f7893;
-                background-color: rgba(40, 50, 80, 80);
-                border-color: rgba(100, 115, 150, 45);
+                color: $text_disabled;
+                background-color: $action_disabled;
+                border-color: $action_disabled_border;
             }
             QPushButton#voiceCancelButton {
                 min-height: 32px;
                 padding: 0 12px;
-                color: #ffd8de;
-                background-color: rgba(135, 45, 65, 135);
-                border: 1px solid rgba(255, 120, 145, 105);
+                color: $danger_text;
+                background-color: $danger;
+                border: 1px solid $danger_border;
                 border-radius: 8px;
             }
             QPushButton#voiceCancelButton:hover {
-                background-color: rgba(175, 50, 75, 180);
+                background-color: $danger_bg_hover;
             }
             QPushButton#voiceCancelButton:disabled {
-                color: #7f6670;
-                background-color: rgba(70, 38, 48, 80);
-                border-color: rgba(120, 75, 85, 45);
+                color: $danger_text_disabled;
+                background-color: $danger_disabled;
+                border-color: $danger_disabled_border;
             }
             QProgressBar#voiceProgress {
                 min-height: 8px;
                 max-height: 8px;
                 color: transparent;
-                background-color: rgba(5, 10, 28, 165);
+                background-color: $field_strong;
                 border: none;
                 border-radius: 4px;
             }
             QProgressBar#voiceProgress::chunk {
-                background-color: rgb(76, 201, 240);
+                background-color: $accent;
                 border-radius: 4px;
             }
             QLabel#voiceStatus {
-                color: #9eacce;
+                color: $text_status;
                 font-size: 12px;
             }
             QLabel#voiceStatus[error="true"] {
-                color: #ff8d9b;
+                color: $error_status;
             }
             QLabel#voiceInstallLog {
                 min-height: 18px;
-                color: #7182aa;
+                color: $text_log;
                 font-size: 11px;
                 font-family: Consolas, "Courier New", monospace;
             }
-            """
+            """)
 
 
 class HotkeyConfigDialog(QDialog):
@@ -876,7 +877,7 @@ class HotkeyConfigDialog(QDialog):
         values = self.config if self.config is not None else DEFAULT_CONFIG
         self.subtitle_rows_spin.setValue(int(values["subtitle_rows"]))
         self.subtitle_rows_spin.setAccessibleName(tr("Subtitle rows"))
-        self.subtitle_rows_spin.setStyleSheet("QSpinBox { color: #f5f7ff; background: #18213b; padding: 8px; border: 1px solid #536080; border-radius: 6px; }")
+        self.subtitle_rows_spin.setStyleSheet(SPINBOX_STYLE)
         subtitle_form.addRow(tr("Subtitle rows"), self.subtitle_rows_spin)
         playing_layout.addWidget(subtitle_card)
 
@@ -1067,7 +1068,7 @@ class HotkeyConfigDialog(QDialog):
 
         self.sovits_seed_spin = QSpinBox()
         self.sovits_seed_spin.setAccessibleName(tr("Generation seed"))
-        self.sovits_seed_spin.setStyleSheet("QSpinBox { color: #f5f7ff; background: #18213b; padding: 8px; border: 1px solid #536080; border-radius: 6px; }")
+        self.sovits_seed_spin.setStyleSheet(SPINBOX_STYLE)
         self.sovits_seed_spin.setRange(-1, 2_147_483_647)
         self.sovits_seed_spin.setSpecialValueText(tr("Random each time"))
         self.sovits_seed_spin.setValue(sovits_seed)
@@ -1354,13 +1355,13 @@ class HotkeyConfigDialog(QDialog):
         self.pet_list.setAccessibleName(tr("Available pets"))
         self.pet_list.setIconSize(QSize(48, 52))
         self.pet_list.setSpacing(4)
-        self.pet_list.setStyleSheet("""
-            QListWidget { background: transparent; color: #f5f7ff; selection-color: #f5f7ff; border: none; outline: none; }
+        self.pet_list.setStyleSheet(themed("""
+            QListWidget { background: transparent; color: $text; selection-color: $text; border: none; outline: none; }
             QListWidget::item { padding: 8px 12px; border: 1px solid transparent; border-radius: 8px; }
-            QListWidget::item:hover { background: #202d4b; }
+            QListWidget::item:hover { background: $list_hover; }
             QListWidget::item:selected,
-            QListWidget::item:selected:!active { color: #f5f7ff; background: #20445b; border-color: #4cc9f0; }
-        """)
+            QListWidget::item:selected:!active { color: $text; background: $list_selected; border-color: $accent_text; }
+        """))
         values = self.config if self.config is not None else DEFAULT_CONFIG
         self._refresh_pet_list(str(values["pet_path"] or default_pet_path()))
         pet_layout.addWidget(self.pet_list)
@@ -1414,7 +1415,7 @@ class HotkeyConfigDialog(QDialog):
         self.pet_idle_seconds.setSuffix(tr(" seconds"))
         self.pet_idle_seconds.setValue(int(values["pet_idle_seconds"]))
         self.pet_idle_seconds.setEnabled(self.pet_idle_combo.currentData() == "timed")
-        self.pet_idle_seconds.setStyleSheet("QSpinBox { color: #f5f7ff; background: #18213b; padding: 8px; border: 1px solid #536080; border-radius: 6px; }")
+        self.pet_idle_seconds.setStyleSheet(SPINBOX_STYLE)
         form.addRow(tr("Duration"), self.pet_idle_seconds)
         form.setRowVisible(self.pet_idle_seconds, self.pet_idle_combo.currentData() == "timed")
         layout.addWidget(card)

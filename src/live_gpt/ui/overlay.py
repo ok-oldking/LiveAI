@@ -47,6 +47,7 @@ from .common import (
     SETTINGS_ICON_PATH,
     UNLOCK_ICON_PATH,
 )
+from .theme import themed
 from .widgets import ReplyDisplay, TranscriptEditor
 
 
@@ -112,7 +113,7 @@ class OverlayWindow(QMainWindow):
         self._focus_history_timer.timeout.connect(
             self._focus_restorer.remember_foreground
         )
-        self._focus_history_timer.start(75)
+        self._focus_history_timer.setInterval(75)
         self._auto_hide_timer = QTimer(self)
         self._auto_hide_timer.setSingleShot(True)
         self._auto_hide_timer.timeout.connect(self._hide_for_auto_hide)
@@ -391,14 +392,14 @@ class OverlayWindow(QMainWindow):
             self._content_opacities.append(effect)
         self.pet.pointer_tracked.connect(self._track_pointer)
 
-        self.setStyleSheet(
+        self.setStyleSheet(themed(
             """
             QWidget#overlayContainer {
                 background: transparent;
             }
             QFrame#overlayPanel {
-                background-color: rgba(12, 20, 48, 224);
-                border: 1px solid rgba(66, 220, 255, 150);
+                background-color: $overlay_panel;
+                border: 1px solid $overlay_border;
                 border-radius: 18px;
             }
             QFrame#overlayPanel[chromeVisible="false"] {
@@ -406,14 +407,14 @@ class OverlayWindow(QMainWindow):
                 border-color: transparent;
             }
             QLabel#overlayTitle {
-                color: #f5f7ff;
+                color: $text;
                 font-size: 20px;
                 font-weight: 700;
             }
             QTextBrowser#errorBanner {
-                color: #ff8999;
-                background-color: rgba(120, 30, 48, 110);
-                border: 1px solid rgba(255, 102, 122, 120);
+                color: $error_text;
+                background-color: $error_banner;
+                border: 1px solid $error_border;
                 border-radius: 10px;
                 padding: 10px 14px;
                 font-size: 14px;
@@ -422,53 +423,53 @@ class OverlayWindow(QMainWindow):
             QComboBox#captureSourceCombo {
                 min-height: 34px;
                 padding: 0 10px;
-                color: #f5f7ff;
-                background-color: rgba(5, 10, 28, 145);
-                border: 1px solid rgba(130, 165, 230, 75);
+                color: $text;
+                background-color: $field;
+                border: 1px solid $border;
                 border-radius: 8px;
             }
             QComboBox#chatTabCombo:disabled,
             QComboBox#captureSourceCombo:disabled {
-                color: rgba(228, 235, 255, 155);
+                color: $text_combo_disabled;
             }
             QComboBox#chatTabCombo QAbstractItemView,
             QComboBox#captureSourceCombo QAbstractItemView {
-                color: #f5f7ff;
-                background-color: rgb(18, 28, 58);
-                selection-background-color: rgb(38, 112, 145);
+                color: $text;
+                background-color: $popup;
+                selection-background-color: $selection_solid;
             }
             QPlainTextEdit#transcriptArea {
-                color: #f5f7ff;
-                background-color: rgba(5, 10, 28, 145);
-                border: 1px solid rgba(130, 165, 230, 75);
+                color: $text;
+                background-color: $field;
+                border: 1px solid $border;
                 border-radius: 10px;
                 padding: 8px;
                 font-size: 15px;
-                selection-background-color: rgba(76, 201, 240, 130);
+                selection-background-color: $selection;
             }
             QFrame#subtitlePanel,
             QFrame#dictationPanel {
-                background-color: rgba(5, 10, 28, 145);
-                border: 1px solid rgba(130, 165, 230, 75);
+                background-color: $field;
+                border: 1px solid $border;
                 border-radius: 10px;
             }
             QLabel#subtitleLine {
-                color: #f5f7ff;
+                color: $text;
                 background: transparent;
                 border: none;
                 font-size: 22px;
                 font-weight: 600;
             }
             QTextBrowser#subtitleFullText {
-                color: #f5f7ff;
+                color: $text;
                 background: transparent;
                 border: none;
                 padding: 4px;
                 font-size: 16px;
-                selection-background-color: rgba(76, 201, 240, 130);
+                selection-background-color: $selection;
             }
             QLabel#dictationState {
-                color: #f5f7ff;
+                color: $text;
                 background: transparent;
                 border: none;
                 font-size: 20px;
@@ -477,13 +478,13 @@ class OverlayWindow(QMainWindow):
             QPushButton {
                 min-height: 30px;
                 padding: 0 12px;
-                color: #f5f7ff;
-                background-color: rgba(70, 88, 140, 125);
-                border: 1px solid rgba(170, 195, 255, 90);
+                color: $text;
+                background-color: $button;
+                border: 1px solid $button_border;
                 border-radius: 8px;
             }
             QPushButton:hover {
-                background-color: rgba(76, 201, 240, 150);
+                background-color: $button_hover;
             }
             QPushButton#autoHideButton,
             QPushButton#configureButton,
@@ -514,32 +515,32 @@ class OverlayWindow(QMainWindow):
                 max-width: 32px;
             }
             QPushButton#exitButton:hover {
-                background-color: rgba(239, 68, 88, 190);
+                background-color: $danger_hover;
             }
             QPushButton#lockButton:checked {
-                background-color: rgba(35, 155, 116, 190);
-                border-color: rgba(130, 255, 195, 190);
+                background-color: $success;
+                border-color: $success_border;
             }
             QPushButton#autoHideButton:checked {
-                background-color: rgba(35, 155, 116, 190);
-                border-color: rgba(130, 255, 195, 190);
+                background-color: $success;
+                border-color: $success_border;
             }
             QPushButton#sendButton {
-                background-color: rgba(35, 155, 116, 190);
+                background-color: $success;
             }
             QPushButton#sendButton:hover {
-                background-color: rgba(40, 190, 140, 220);
+                background-color: $success_hover;
             }
             QPushButton#sendWithoutScreenshotButton {
                 min-width: 132px;
                 max-width: 132px;
-                background-color: rgba(38, 112, 145, 190);
+                background-color: $secondary;
             }
             QPushButton#sendWithoutScreenshotButton:hover {
-                background-color: rgba(48, 145, 185, 220);
+                background-color: $secondary_hover;
             }
             QPushButton#clearButton:hover {
-                background-color: rgba(210, 116, 34, 190);
+                background-color: $warning_hover;
             }
             QPushButton#microphoneButton {
                 min-width: 56px;
@@ -547,24 +548,24 @@ class OverlayWindow(QMainWindow):
                 min-height: 56px;
                 max-height: 56px;
                 padding: 0;
-                background-color: rgba(48, 72, 128, 175);
+                background-color: $mic;
                 border-radius: 28px;
             }
             QPushButton#microphoneButton[recordingState="recording"] {
                 color: white;
-                background-color: rgba(220, 48, 72, 220);
-                border-color: rgba(255, 150, 165, 220);
+                background-color: $mic_recording;
+                border-color: $mic_recording_border;
             }
             QPushButton#microphoneButton[recordingState="saved"] {
-                background-color: rgba(34, 160, 105, 210);
-                border-color: rgba(130, 255, 195, 190);
+                background-color: $mic_saved;
+                border-color: $success_border;
             }
             QPushButton#microphoneButton[recordingState="error"] {
-                background-color: rgba(210, 116, 34, 215);
-                border-color: rgba(255, 205, 130, 200);
+                background-color: $mic_error;
+                border-color: $mic_error_border;
             }
             """
-        )
+        ))
         self.setStyleSheet(self.styleSheet() + COMBOBOX_STYLE)
         self._set_chrome_visible(False)
         self._fit_subtitle_rows()
@@ -993,7 +994,28 @@ class OverlayWindow(QMainWindow):
             return []
 
         available_width = max(self.subtitle_panel.width() - 32, 1)
+        # Progress updates re-render many times per reply; reuse the wrap
+        # until the text, width or font changes.
+        cache_key = (text, available_width, self.subtitle_line_one.font().key())
+        cached = getattr(self, "_subtitle_lines_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return list(cached[1])
         metrics = self.subtitle_line_one.fontMetrics()
+
+        def fits(candidate: str) -> bool:
+            return metrics.horizontalAdvance(candidate) <= available_width
+
+        def fitting_length(prefix: str, chunk: str) -> int:
+            # Longest prefix of chunk that fits after prefix (binary search).
+            low, high = 0, len(chunk)
+            while low < high:
+                middle = (low + high + 1) // 2
+                if fits(prefix + chunk[:middle]):
+                    low = middle
+                else:
+                    high = middle - 1
+            return low
+
         lines: list[str] = []
         for raw_paragraph in text.splitlines() or [text]:
             paragraph = " ".join(raw_paragraph.split())
@@ -1001,36 +1023,26 @@ class OverlayWindow(QMainWindow):
                 continue
             current = ""
             for word in paragraph.split(" "):
-                prefix = f"{current} " if current else ""
-                candidate = prefix
-                whole_word_fits = True
-                for character in word:
-                    if (
-                        metrics.horizontalAdvance(candidate + character)
-                        > available_width
-                    ):
-                        whole_word_fits = False
-                        break
-                    candidate += character
-                if whole_word_fits:
+                candidate = f"{current} {word}" if current else word
+                if fits(candidate):
                     current = candidate
                     continue
                 if current:
                     lines.append(current)
                     current = ""
-                for character in word:
-                    if (
-                        current
-                        and metrics.horizontalAdvance(current + character)
-                        > available_width
-                    ):
-                        lines.append(current)
-                        current = character
-                    else:
-                        current += character
+                # Break text without spaces (CJK, long URLs) by character,
+                # always keeping at least one character per line.
+                while word:
+                    length = max(1, fitting_length("", word))
+                    if length >= len(word):
+                        current = word
+                        break
+                    lines.append(word[:length])
+                    word = word[length:]
             if current:
                 lines.append(current)
-        return lines
+        self._subtitle_lines_cache = (cache_key, lines)
+        return list(lines)
 
     def _subtitle_index_at_progress(self, lines: list[str]) -> int:
         if not lines:
@@ -1237,10 +1249,15 @@ class OverlayWindow(QMainWindow):
         collapsed = self._subtitle_collapsed_geometry
         content_width = max(self.subtitle_full_text.viewport().width(), 1)
         metrics = self.subtitle_full_text.fontMetrics()
-        document = self.subtitle_full_text.document().clone()
-        document.setTextWidth(content_width)
-        text_height = int(document.size().height())
-        document.deleteLater()
+        document = self.subtitle_full_text.document()
+        if document.textWidth() == content_width:
+            # The viewport already lays the reply out at this width.
+            text_height = int(document.size().height())
+        else:
+            document = document.clone()
+            document.setTextWidth(content_width)
+            text_height = int(document.size().height())
+            document.deleteLater()
         margins = self.subtitle_panel.layout().contentsMargins()
         viewport_chrome = self.subtitle_full_text.height() - self.subtitle_full_text.viewport().height()
         panel_height = (
@@ -1657,6 +1674,18 @@ class OverlayWindow(QMainWindow):
             style.unpolish(widget)
             style.polish(widget)
             widget.update()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        # Qt delivers the show event before the native window appears, so the
+        # app the user was in is still foreground. Poll only while visible:
+        # a hidden overlay cannot take focus, so nothing changes until then.
+        self._focus_restorer.remember_foreground()
+        self._focus_history_timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._focus_history_timer.stop()
+        super().hideEvent(event)
 
     def enterEvent(self, event) -> None:  # noqa: N802
         self._track_pointer(QCursor.pos())
