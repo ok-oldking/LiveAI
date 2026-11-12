@@ -132,7 +132,7 @@ jobs:
       - name: Build with pyappify
         uses: ok-oldking/pyappify-action@c5cc8fe5c9bd5c732969018694a2645474c48b7e
         with:
-          version: v1.2.3
+          version: v1.2.6
 
       - name: Upload release assets
         uses: actions/upload-artifact@v4

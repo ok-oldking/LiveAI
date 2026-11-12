@@ -70,7 +70,6 @@ class PackagingTests(unittest.TestCase):
                     self.assertIn(locked[dependency_name], dependency.specifier)
 
     def test_staged_update_package_loads_ui_and_entry_point(self) -> None:
-        config = yaml.safe_load((ROOT / "pyappify.yml").read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as directory:
             staged = Path(directory)
             for entry in (ROOT / "deploy.txt").read_text(encoding="utf-8").splitlines():
@@ -86,6 +85,9 @@ import runpy
 from pathlib import Path
 from unittest.mock import patch
 from PySide6.QtWidgets import QApplication
+
+# A shortcut runs main.py without the launcher's PYTHONPATH.
+runpy.run_path('main.py', run_name='shortcut_import_check')
 import live_gpt.app as app
 from live_gpt.pet import default_pet_path
 
@@ -107,7 +109,7 @@ print(json.dumps({'source': str(Path(app.__file__).resolve())}))
 """
             result = subprocess.run(
                 [sys.executable, "-c", code], cwd=staged,
-                env={**os.environ, "PYTHONPATH": config["profiles"][0]["PYTHONPATH"],
+                env={**os.environ, "PYTHONPATH": "",
                      "PYTHONNOUSERSITE": "1", "QT_QPA_PLATFORM": "offscreen"},
                 capture_output=True, text=True, encoding="utf-8", timeout=30,
             )
