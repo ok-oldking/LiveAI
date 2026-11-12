@@ -36,6 +36,30 @@ CHATGPT_COMPOSER_SELECTOR = (
     '#prompt-textarea[contenteditable="true"]:visible, '
     'textarea[name="prompt-textarea"]:visible'
 )
+PROMPT_ACCEPT_TIMEOUT_MS = 10_000
+_USER_MESSAGE_COUNT_SCRIPT = (
+    "() => document.querySelectorAll('[data-message-author-role=\"user\"]').length"
+)
+# ChatGPT accepted the prompt when it cleared the composer (text and
+# attachments) or a new user message appeared in the conversation.
+_PROMPT_ACCEPTED_SCRIPT = """userMessagesBefore => {
+    if (typeof userMessagesBefore === 'number' && document.querySelectorAll(
+        '[data-message-author-role="user"]').length > userMessagesBefore) return true;
+    const composer = [...document.querySelectorAll(
+        '[data-composer-markdown], #prompt-textarea, textarea[name="prompt-textarea"], '
+        + '[data-composer-surface="true"] [contenteditable="true"][role="textbox"]'
+    )].find(element => element.getClientRects().length);
+    if (!composer) return false;
+    const text = composer.value ?? composer.innerText ?? '';
+    const attachments = composer.closest('form')?.querySelector(
+        '[data-composer-attachments] [class*="group/composer-attachment"]'
+    );
+    // A failed upload keeps the prompt; stop waiting so send() can retry it.
+    if (attachments && /upload failed|failed to upload|上传失败|上傳失敗/i.test(
+        composer.closest('form').querySelector('[data-composer-attachments]').textContent || ''
+    )) return 'failed';
+    return !text.trim() && !attachments;
+}"""
 USAGE_LIMIT_BANNER_SELECTOR = (
     'form[data-thread-find-composer="true"] aside[role="status"]:visible, '
     'form aside[role="status"]:visible, '
@@ -202,20 +226,10 @@ class ChatGPTProvider:
         for _ in range(3):
             try:
                 send_button.wait_for(state="visible", timeout=5_000)
+                user_messages = page.evaluate(_USER_MESSAGE_COUNT_SCRIPT)
                 cls._click_send_button(page, send_button)
                 # Clicking a usable button does not prove ChatGPT accepted the prompt.
-                page.wait_for_function("""() => {
-                    const composer = [...document.querySelectorAll(
-                        '[data-composer-markdown], #prompt-textarea, textarea[name="prompt-textarea"], '
-                        + '[data-composer-surface="true"] [contenteditable="true"][role="textbox"]'
-                    )].find(element => element.getClientRects().length);
-                    if (!composer) return false;
-                    const text = composer.value ?? composer.innerText ?? '';
-                    const attachments = composer.closest('form')?.querySelector(
-                        '[data-composer-attachments] [class*="group/composer-attachment"]'
-                    );
-                    return !text.trim() && !attachments;
-                }""", timeout=5_000, polling=100)
+                cls._wait_for_prompt_accepted(page, user_messages)
                 return
             except Exception:
                 # A limit or failed upload can appear while Send becomes ready.
@@ -237,6 +251,29 @@ class ChatGPTProvider:
                 raise
 
     _click_send_button = staticmethod(click_when_ready)
+
+    @staticmethod
+    def _wait_for_prompt_accepted(
+        page: Any, user_messages_before: Any, timeout: int = PROMPT_ACCEPT_TIMEOUT_MS,
+    ) -> None:
+        # Poll from Python, not with wait_for_function: its in-page timers are
+        # throttled when the tab is in the background or DevTools is open, so
+        # an accepted prompt could still time out.
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        deadline = time.monotonic() + timeout / 1000
+        while True:
+            accepted = page.evaluate(_PROMPT_ACCEPTED_SCRIPT, user_messages_before)
+            if accepted == "failed":
+                raise PlaywrightTimeoutError("Screenshot upload failed before the prompt was accepted")
+            if accepted:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise PlaywrightTimeoutError(
+                    f"ChatGPT did not accept the prompt within {timeout} ms"
+                )
+            time.sleep(min(0.1, remaining))
 
     @staticmethod
     def _turn_id(turn: Any, **kwargs: Any) -> str | None:

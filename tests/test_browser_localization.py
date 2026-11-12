@@ -5,6 +5,7 @@ import base64
 import io
 import os
 from pathlib import Path
+import time
 import unittest
 import wave
 
@@ -731,6 +732,23 @@ class BrowserLocalizationTests(unittest.TestCase):
         with self.assertRaises(TimeoutError):
             ChatGPTProvider.send(self.page, "Unaccepted prompt")
         self.assertEqual(ChatGPTProvider.read_composer_text(self.page), "Unaccepted prompt")
+
+    def test_new_user_message_counts_as_sent_while_composer_still_shows_prompt(self):
+        # With DevTools open the composer can lag behind; the posted message
+        # proves the prompt was sent, so it must not be reported as a failure.
+        self.page.set_content('''<div data-message-author-role="user">Earlier</div>
+          <form data-thread-find-composer="true" onsubmit="window.sendCount++;
+            const message = document.createElement('div');
+            message.setAttribute('data-message-author-role', 'user');
+            message.textContent = this.querySelector('[data-composer-markdown]').innerText;
+            document.body.prepend(message); return false">
+          <div data-composer-markdown contenteditable="true" role="textbox"></div>
+          <button type="submit">Send</button></form>''')
+        self.page.evaluate('window.sendCount=0')
+        started = time.monotonic()
+        ChatGPTProvider.send(self.page, "Sent prompt")
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(self.page.evaluate('window.sendCount'), 1)
 
     def test_upload_failure_while_send_is_clicked_reuploads_without_duplicate_message(self):
         from unittest.mock import patch
